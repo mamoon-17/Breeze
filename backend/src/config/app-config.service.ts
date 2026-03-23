@@ -120,6 +120,14 @@ export class AppConfigService {
     return this.configService.get<string>('NODE_ENV') === 'production';
   }
 
+  get allowedOrigins(): string[] {
+    const origins = this.configService.get<string>('ALLOWED_ORIGINS');
+    if (origins) {
+      return origins.split(',').map((o) => o.trim());
+    }
+    return ['http://localhost:3000', 'http://localhost:3001'];
+  }
+
   /**
    * Get required env var with Result type
    * Returns Result<string, AppError> instead of throwing
