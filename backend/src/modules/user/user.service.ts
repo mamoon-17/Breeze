@@ -67,7 +67,7 @@ export class UserService {
    * Returns Result<User, AppError> instead of throwing or returning null
    */
   async findByProviderId(
-    provider: 'google' | 'local',
+    provider: 'google',
     providerId: string,
   ): Promise<Result<User, AppError>> {
     try {

@@ -17,7 +17,6 @@ import { UserModule } from './modules/user/user.module';
     }),
     ScheduleModule.forRoot(),
     AppConfigModule,
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     TypeOrmModule.forRootAsync({
       inject: [AppConfigService],
       useFactory: (

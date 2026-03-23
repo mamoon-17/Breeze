@@ -15,7 +15,7 @@ export class User {
   email: string;
 
   @Column({ type: 'varchar', length: 100 })
-  provider: 'google' | 'local';
+  provider: 'google';
 
   @Column({ type: 'varchar', length: 255 })
   providerId: string;
@@ -31,9 +31,6 @@ export class User {
 
   @Column({ type: 'text', nullable: true })
   picture?: string;
-
-  @Column({ type: 'varchar', length: 255, nullable: true })
-  password?: string;
 
   @CreateDateColumn()
   createdAt: Date;

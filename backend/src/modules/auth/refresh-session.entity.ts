@@ -16,11 +16,27 @@ export class RefreshSession {
   @Column({ type: 'uuid' })
   userId: string;
 
+  @Index()
+  @Column({ type: 'uuid' })
+  familyId: string;
+
   @Column({ type: 'varchar', length: 128 })
   tokenHash: string;
 
+  @Index()
   @Column({ type: 'timestamptz' })
   expiresAt: Date;
+
+  @Index()
+  @Column({ type: 'timestamptz' })
+  absoluteExpiresAt: Date;
+
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  replacedBySessionId?: string;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  rotatedAt?: Date;
 
   @Column({ type: 'timestamptz', nullable: true })
   revokedAt?: Date;

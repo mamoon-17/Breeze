@@ -25,14 +25,14 @@ export class UserController {
     @Param('provider') providerParam: string,
     @Param('providerId') providerId: string,
   ) {
-    if (providerParam !== 'google' && providerParam !== 'local') {
+    if (providerParam !== 'google') {
       throw toHttpException(
-        Errors.validationFailed("provider must be either 'google' or 'local'"),
+        Errors.validationFailed("provider must be 'google'"),
       );
     }
 
     const result = await this.userService.findByProviderId(
-      providerParam,
+      'google',
       providerId,
     );
     if (result.isErr()) {

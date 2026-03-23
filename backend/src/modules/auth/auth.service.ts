@@ -1,11 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Profile } from 'passport-google-oauth20';
 import { Result, ok, err } from 'neverthrow';
 import { randomUUID } from 'crypto';
 import { compare, hash } from 'bcryptjs';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { AppConfigService } from '../../config/app-config.service';
 import { UserService } from '../user/user.service';
 import { User } from '../user/user.entity';
@@ -28,8 +28,16 @@ interface TokenSubject {
   displayName: string;
 }
 
+interface SessionSeed {
+  sessionId: string;
+  familyId: string;
+  absoluteExpiresAt: Date;
+}
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly jwtService: JwtService,
     private readonly appConfigService: AppConfigService,
@@ -85,52 +93,34 @@ export class AuthService {
    */
   async issueTokens(
     subject: TokenSubject,
-    existingSessionId?: string,
   ): Promise<Result<AuthTokens, AppError>> {
     try {
-      const sessionId = existingSessionId ?? randomUUID();
-
-      const accessPayload: JwtAccessPayload = {
-        sub: subject.providerId,
-        uid: subject.userId,
-        email: subject.email,
-        provider: subject.provider,
-        tokenType: 'access',
+      const sessionSeed: SessionSeed = {
+        sessionId: randomUUID(),
+        familyId: randomUUID(),
+        absoluteExpiresAt: this.computeAbsoluteSessionExpiry(),
       };
-      const refreshPayload: JwtRefreshPayload = {
-        sub: subject.providerId,
-        uid: subject.userId,
-        sid: sessionId,
-        email: subject.email,
-        provider: subject.provider,
-        tokenType: 'refresh',
-      };
-      const [accessToken, refreshToken] = await Promise.all([
-        this.jwtService.signAsync(accessPayload, {
-          secret: this.appConfigService.jwtAccessSecret,
-          expiresIn: this.appConfigService.jwtAccessExpiresInSeconds,
-        }),
-        this.jwtService.signAsync(refreshPayload, {
-          secret: this.appConfigService.jwtRefreshSecret,
-          expiresIn: this.appConfigService.jwtRefreshExpiresInSeconds,
-        }),
-      ]);
 
-      const sessionSaveResult = await this.upsertRefreshSession({
-        id: sessionId,
-        userId: subject.userId,
-        refreshToken,
-      });
-      if (sessionSaveResult.isErr()) {
-        return err(sessionSaveResult.error);
+      const signingResult = await this.signTokens(
+        subject,
+        sessionSeed.sessionId,
+      );
+      if (signingResult.isErr()) {
+        return err(signingResult.error);
       }
 
-      return ok({
-        accessToken,
-        refreshToken,
-        accessTokenExpiresIn: `${this.appConfigService.jwtAccessExpiresInSeconds}s`,
-        refreshTokenExpiresIn: `${this.appConfigService.jwtRefreshExpiresInSeconds}s`,
+      const sessionCreateResult = await this.createRefreshSession({
+        id: sessionSeed.sessionId,
+        userId: subject.userId,
+        familyId: sessionSeed.familyId,
+        absoluteExpiresAt: sessionSeed.absoluteExpiresAt,
+        refreshToken: signingResult.value.refreshToken,
       });
+      if (sessionCreateResult.isErr()) {
+        return err(sessionCreateResult.error);
+      }
+
+      return ok(this.toAuthTokens(signingResult.value));
     } catch (error) {
       const originalError =
         error instanceof Error ? error : new Error(String(error));
@@ -157,8 +147,10 @@ export class AuthService {
     if (sessionValidationResult.isErr()) {
       return err(sessionValidationResult.error);
     }
+    const currentSession = sessionValidationResult.value;
 
-    return this.issueTokens(
+    const newSessionId = randomUUID();
+    const signingResult = await this.signTokens(
       {
         userId: payload.uid,
         providerId: payload.sub,
@@ -166,8 +158,22 @@ export class AuthService {
         provider: payload.provider,
         displayName: payload.email,
       },
-      payload.sid,
+      newSessionId,
     );
+    if (signingResult.isErr()) {
+      return err(signingResult.error);
+    }
+
+    const rotationResult = await this.rotateRefreshSession({
+      currentSession,
+      newSessionId,
+      newRefreshToken: signingResult.value.refreshToken,
+    });
+    if (rotationResult.isErr()) {
+      return err(rotationResult.error);
+    }
+
+    return ok(this.toAuthTokens(signingResult.value));
   }
 
   async logoutSession(
@@ -203,13 +209,7 @@ export class AuthService {
 
   async logoutAllSessions(userId: string): Promise<Result<void, AppError>> {
     try {
-      await this.refreshSessionRepository
-        .createQueryBuilder()
-        .update(RefreshSession)
-        .set({ revokedAt: new Date() })
-        .where('userId = :userId', { userId })
-        .andWhere('revokedAt IS NULL')
-        .execute();
+      await this.revokeAllSessionsByUser(userId);
 
       return ok(undefined);
     } catch (error) {
@@ -233,7 +233,26 @@ export class AuthService {
         },
       });
 
-      if (!session || session.revokedAt || session.expiresAt < new Date()) {
+      if (!session) {
+        return err(Errors.invalidRefreshToken());
+      }
+
+      if (session.replacedBySessionId || session.rotatedAt) {
+        const reusedSessionUserId = String(session.userId);
+        const reusedSessionFamilyId = String(session.familyId);
+        await this.handleRefreshReuseDetected(
+          reusedSessionUserId,
+          reusedSessionFamilyId,
+        );
+        return err(Errors.invalidRefreshToken());
+      }
+
+      const now = new Date();
+      if (
+        session.revokedAt ||
+        session.expiresAt < now ||
+        session.absoluteExpiresAt < now
+      ) {
         return err(Errors.invalidRefreshToken());
       }
 
@@ -255,17 +274,21 @@ export class AuthService {
     }
   }
 
-  private async upsertRefreshSession(input: {
+  private async createRefreshSession(input: {
     id: string;
     userId: string;
+    familyId: string;
+    absoluteExpiresAt: Date;
     refreshToken: string;
   }): Promise<Result<void, AppError>> {
     try {
-      await this.refreshSessionRepository.save({
+      await this.refreshSessionRepository.insert({
         id: input.id,
         userId: input.userId,
+        familyId: input.familyId,
         tokenHash: await this.hashRefreshToken(input.refreshToken),
         expiresAt: this.computeRefreshSessionExpiry(),
+        absoluteExpiresAt: input.absoluteExpiresAt,
       });
       return ok(undefined);
     } catch (error) {
@@ -275,6 +298,177 @@ export class AuthService {
         Errors.databaseError('Failed to save refresh session', originalError),
       );
     }
+  }
+
+  private async rotateRefreshSession(input: {
+    currentSession: RefreshSession;
+    newSessionId: string;
+    newRefreshToken: string;
+  }): Promise<Result<void, AppError>> {
+    const now = new Date();
+    const currentSessionUserId = String(input.currentSession.userId);
+    const currentSessionFamilyId = String(input.currentSession.familyId);
+    const currentSessionAbsoluteExpiresAt = new Date(
+      String(input.currentSession.absoluteExpiresAt),
+    );
+
+    try {
+      const newTokenHash = await this.hashRefreshToken(input.newRefreshToken);
+
+      await this.refreshSessionRepository.manager.transaction(
+        async (manager) => {
+          const updateResult = await manager.update(
+            RefreshSession,
+            {
+              id: input.currentSession.id,
+              userId: currentSessionUserId,
+              replacedBySessionId: IsNull(),
+              revokedAt: IsNull(),
+            },
+            {
+              replacedBySessionId: input.newSessionId,
+              rotatedAt: now,
+              revokedAt: now,
+            },
+          );
+
+          if ((updateResult.affected ?? 0) !== 1) {
+            throw new Error('REFRESH_TOKEN_ALREADY_SPENT');
+          }
+
+          await manager.insert(RefreshSession, {
+            id: input.newSessionId,
+            userId: currentSessionUserId,
+            familyId: currentSessionFamilyId,
+            tokenHash: newTokenHash,
+            expiresAt: this.computeRefreshSessionExpiry(),
+            absoluteExpiresAt: currentSessionAbsoluteExpiresAt,
+          });
+        },
+      );
+
+      return ok(undefined);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'REFRESH_TOKEN_ALREADY_SPENT'
+      ) {
+        await this.handleRefreshReuseDetected(
+          currentSessionUserId,
+          currentSessionFamilyId,
+        );
+        return err(Errors.invalidRefreshToken());
+      }
+
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(
+        Errors.databaseError('Failed to rotate refresh session', originalError),
+      );
+    }
+  }
+
+  private async signTokens(
+    subject: TokenSubject,
+    sessionId: string,
+  ): Promise<Result<{ accessToken: string; refreshToken: string }, AppError>> {
+    try {
+      const accessPayload: JwtAccessPayload = {
+        sub: subject.providerId,
+        uid: subject.userId,
+        email: subject.email,
+        provider: subject.provider,
+        tokenType: 'access',
+      };
+      const refreshPayload: JwtRefreshPayload = {
+        sub: subject.providerId,
+        uid: subject.userId,
+        sid: sessionId,
+        email: subject.email,
+        provider: subject.provider,
+        tokenType: 'refresh',
+      };
+
+      const [accessToken, refreshToken] = await Promise.all([
+        this.jwtService.signAsync(accessPayload, {
+          secret: this.appConfigService.jwtAccessSecret,
+          expiresIn: this.appConfigService.jwtAccessExpiresInSeconds,
+        }),
+        this.jwtService.signAsync(refreshPayload, {
+          secret: this.appConfigService.jwtRefreshSecret,
+          expiresIn: this.appConfigService.jwtRefreshExpiresInSeconds,
+        }),
+      ]);
+
+      return ok({ accessToken, refreshToken });
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(Errors.internalError(originalError));
+    }
+  }
+
+  private toAuthTokens(tokens: {
+    accessToken: string;
+    refreshToken: string;
+  }): AuthTokens {
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      accessTokenExpiresIn: `${this.appConfigService.jwtAccessExpiresInSeconds}s`,
+      refreshTokenExpiresIn: `${this.appConfigService.jwtRefreshExpiresInSeconds}s`,
+    };
+  }
+
+  private async handleRefreshReuseDetected(
+    userId: string,
+    familyId: string,
+  ): Promise<void> {
+    try {
+      if (this.appConfigService.strictRefreshReuseRevocation) {
+        await this.revokeAllSessionsByUser(userId);
+        return;
+      }
+
+      await this.revokeSessionFamily(userId, familyId);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      this.logger.error(
+        `Failed to apply refresh reuse policy: ${originalError.message}`,
+      );
+    }
+  }
+
+  private async revokeSessionFamily(
+    userId: string,
+    familyId: string,
+  ): Promise<void> {
+    await this.refreshSessionRepository
+      .createQueryBuilder()
+      .update(RefreshSession)
+      .set({ revokedAt: new Date() })
+      .where('userId = :userId', { userId })
+      .andWhere('familyId = :familyId', { familyId })
+      .andWhere('revokedAt IS NULL')
+      .execute();
+  }
+
+  private async revokeAllSessionsByUser(userId: string): Promise<void> {
+    await this.refreshSessionRepository
+      .createQueryBuilder()
+      .update(RefreshSession)
+      .set({ revokedAt: new Date() })
+      .where('userId = :userId', { userId })
+      .andWhere('revokedAt IS NULL')
+      .execute();
+  }
+
+  private computeAbsoluteSessionExpiry(): Date {
+    const absoluteLifetimeSeconds = Number(
+      this.appConfigService.refreshSessionAbsoluteLifetimeSeconds,
+    );
+    return new Date(Date.now() + absoluteLifetimeSeconds * 1000);
   }
 
   private computeRefreshSessionExpiry(): Date {

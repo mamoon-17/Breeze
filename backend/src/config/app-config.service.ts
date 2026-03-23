@@ -53,17 +53,17 @@ export class AppConfigService {
   }
 
   get jwtAccessExpiresIn(): string {
-    return this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') ?? '3d';
+    return this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') ?? '10m';
   }
 
   get jwtRefreshExpiresIn(): string {
-    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '10m';
+    return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
   }
 
   get jwtAccessExpiresInSeconds(): number {
     return (
       Number(this.configService.get<string>('JWT_ACCESS_EXPIRES_IN_SECONDS')) ||
-      259200
+      600
     );
   }
 
@@ -71,21 +71,48 @@ export class AppConfigService {
     return (
       Number(
         this.configService.get<string>('JWT_REFRESH_EXPIRES_IN_SECONDS'),
-      ) || 600
+      ) || 604800
     );
   }
 
   get accessCookieMaxAgeMs(): number {
     return (
       Number(this.configService.get<string>('JWT_ACCESS_COOKIE_MAX_AGE_MS')) ||
-      259200000
+      600000
     );
   }
 
   get refreshCookieMaxAgeMs(): number {
     return (
       Number(this.configService.get<string>('JWT_REFRESH_COOKIE_MAX_AGE_MS')) ||
-      600000
+      604800000
+    );
+  }
+
+  get refreshSessionAbsoluteLifetimeSeconds(): number {
+    return (
+      Number(
+        this.configService.get<string>(
+          'JWT_REFRESH_SESSION_ABSOLUTE_LIFETIME_SECONDS',
+        ),
+      ) || 2592000
+    );
+  }
+
+  get refreshReuseDetectionRetentionSeconds(): number {
+    return (
+      Number(
+        this.configService.get<string>(
+          'JWT_REFRESH_REUSE_DETECTION_RETENTION_SECONDS',
+        ),
+      ) || 604800
+    );
+  }
+
+  get strictRefreshReuseRevocation(): boolean {
+    return (
+      this.configService.get<string>('JWT_STRICT_REFRESH_REUSE_REVOKE_ALL') ===
+      'true'
     );
   }
 
