@@ -119,6 +119,7 @@ export class AuthService {
         familyId: sessionSeed.familyId,
         absoluteExpiresAt: sessionSeed.absoluteExpiresAt,
         refreshToken: signingResult.value.refreshToken,
+        accessTokenJti: signingResult.value.accessTokenJti,
       });
       if (sessionCreateResult.isErr()) {
         return err(sessionCreateResult.error);
@@ -172,6 +173,14 @@ export class AuthService {
     }
     const currentSession = sessionValidationResult.value;
 
+    // Blacklist the old access token
+    if (currentSession.currentAccessTokenJti) {
+      await this.tokenBlacklistService.addToBlacklist(
+        currentSession.currentAccessTokenJti,
+        this.appConfigService.jwtAccessExpiresInSeconds,
+      );
+    }
+
     const newSessionId = randomUUID();
     const signingResult = await this.signTokens(
       {
@@ -200,6 +209,7 @@ export class AuthService {
       currentSession,
       newSessionId,
       newRefreshToken: signingResult.value.refreshToken,
+      newAccessTokenJti: signingResult.value.accessTokenJti,
     });
     if (rotationResult.isErr()) {
       await this.refreshEventService.logRefreshEvent({
@@ -229,6 +239,7 @@ export class AuthService {
   async logoutSession(
     payload: JwtRefreshPayload,
     rawRefreshToken: string,
+    accessTokenJti?: string,
   ): Promise<Result<void, AppError>> {
     if (payload.tokenType !== 'refresh' || !payload.sid || !payload.uid) {
       return err(Errors.invalidRefreshToken());
@@ -242,7 +253,26 @@ export class AuthService {
       return err(sessionValidationResult.error);
     }
 
+    const currentSession = sessionValidationResult.value;
+
     try {
+      // Blacklist the current access token if provided
+      if (accessTokenJti) {
+        await this.tokenBlacklistService.addToBlacklist(
+          accessTokenJti,
+          this.appConfigService.jwtAccessExpiresInSeconds,
+        );
+      }
+
+      // Also blacklist the tracked access token from the session
+      if (currentSession.currentAccessTokenJti) {
+        await this.tokenBlacklistService.addToBlacklist(
+          currentSession.currentAccessTokenJti,
+          this.appConfigService.jwtAccessExpiresInSeconds,
+        );
+      }
+
+      // Revoke this specific session
       await this.refreshSessionRepository.update(
         { id: payload.sid, userId: payload.uid },
         { revokedAt: new Date() },
@@ -276,6 +306,15 @@ export class AuthService {
     userId: string,
   ): Promise<Result<void, AppError>> {
     try {
+      // Get all active sessions for this user
+      const sessions = await this.refreshSessionRepository.find({
+        where: {
+          userId,
+          revokedAt: IsNull(),
+        },
+      });
+
+      // Blacklist the current access token
       const blacklistResult = await this.tokenBlacklistService.addToBlacklist(
         jti,
         this.appConfigService.jwtAccessExpiresInSeconds,
@@ -284,6 +323,17 @@ export class AuthService {
         return err(blacklistResult.error);
       }
 
+      // Blacklist all other access tokens from active sessions
+      for (const session of sessions) {
+        if (session.currentAccessTokenJti) {
+          await this.tokenBlacklistService.addToBlacklist(
+            session.currentAccessTokenJti,
+            this.appConfigService.jwtAccessExpiresInSeconds,
+          );
+        }
+      }
+
+      // Revoke all refresh sessions
       await this.revokeAllSessionsByUser(userId);
 
       return ok(undefined);
@@ -354,6 +404,7 @@ export class AuthService {
     familyId: string;
     absoluteExpiresAt: Date;
     refreshToken: string;
+    accessTokenJti: string;
   }): Promise<Result<void, AppError>> {
     try {
       await this.refreshSessionRepository.insert({
@@ -361,6 +412,7 @@ export class AuthService {
         userId: input.userId,
         familyId: input.familyId,
         tokenHash: await this.hashRefreshToken(input.refreshToken),
+        currentAccessTokenJti: input.accessTokenJti,
         expiresAt: this.computeRefreshSessionExpiry(),
         absoluteExpiresAt: input.absoluteExpiresAt,
       });
@@ -378,6 +430,7 @@ export class AuthService {
     currentSession: RefreshSession;
     newSessionId: string;
     newRefreshToken: string;
+    newAccessTokenJti: string;
   }): Promise<Result<void, AppError>> {
     const now = new Date();
     const currentSessionUserId = String(input.currentSession.userId);
@@ -415,6 +468,7 @@ export class AuthService {
             userId: currentSessionUserId,
             familyId: currentSessionFamilyId,
             tokenHash: newTokenHash,
+            currentAccessTokenJti: input.newAccessTokenJti,
             expiresAt: this.computeRefreshSessionExpiry(),
             absoluteExpiresAt: currentSessionAbsoluteExpiresAt,
           });
@@ -445,10 +499,11 @@ export class AuthService {
   private async signTokens(
     subject: TokenSubject,
     sessionId: string,
-  ): Promise<Result<{ accessToken: string; refreshToken: string }, AppError>> {
+  ): Promise<Result<{ accessToken: string; refreshToken: string; accessTokenJti: string }, AppError>> {
     try {
+      const accessTokenJti = randomUUID();
       const accessPayload: JwtAccessPayload = {
-        jti: randomUUID(),
+        jti: accessTokenJti,
         sub: subject.providerId,
         uid: subject.userId,
         email: subject.email,
@@ -475,7 +530,7 @@ export class AuthService {
         }),
       ]);
 
-      return ok({ accessToken, refreshToken });
+      return ok({ accessToken, refreshToken, accessTokenJti });
     } catch (error) {
       const originalError =
         error instanceof Error ? error : new Error(String(error));

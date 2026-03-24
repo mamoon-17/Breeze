@@ -23,6 +23,9 @@ export class RefreshSession {
   @Column({ type: 'varchar', length: 128 })
   tokenHash: string;
 
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  currentAccessTokenJti: string | null;
+
   @Index()
   @Column({ type: 'timestamptz' })
   expiresAt: Date;

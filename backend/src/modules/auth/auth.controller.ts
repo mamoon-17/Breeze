@@ -104,15 +104,25 @@ export class AuthController {
   async logout(
     @RefreshPayload() payload: JwtRefreshPayload,
     @RefreshToken() rawRefreshToken: string | undefined,
+    @AccessToken() rawAccessToken: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
     if (!rawRefreshToken) {
       throw toHttpException(Errors.invalidRefreshToken());
     }
 
+    let accessTokenJti: string | undefined;
+    if (rawAccessToken) {
+      const decoded = this.jwtService.decode(rawAccessToken) as JwtAccessPayload | null;
+      if (decoded?.jti) {
+        accessTokenJti = decoded.jti;
+      }
+    }
+
     const result = await this.authService.logoutSession(
       payload,
       rawRefreshToken,
+      accessTokenJti,
     );
     if (result.isErr()) {
       throw toHttpException(result.error);
