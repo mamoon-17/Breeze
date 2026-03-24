@@ -8,6 +8,8 @@ import { compare, hash } from 'bcryptjs';
 import { IsNull, Repository } from 'typeorm';
 import { AppConfigService } from '../../config/app-config.service';
 import { UserService } from '../user/user.service';
+import { TokenBlacklistService } from './token-blacklist.service';
+import { RefreshEventService } from './refresh-event.service';
 import { User } from '../user/user.entity';
 import { AppError, Errors } from '../../common/errors/app-error';
 import {
@@ -42,6 +44,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly appConfigService: AppConfigService,
     private readonly userService: UserService,
+    private readonly tokenBlacklistService: TokenBlacklistService,
+    private readonly refreshEventService: RefreshEventService,
     @InjectRepository(RefreshSession)
     private readonly refreshSessionRepository: Repository<RefreshSession>,
   ) {}
@@ -135,8 +139,18 @@ export class AuthService {
   async refreshTokens(
     payload: JwtRefreshPayload,
     rawRefreshToken: string,
+    clientInfo?: { ipAddress?: string; userAgent?: string },
   ): Promise<Result<AuthTokens, AppError>> {
     if (payload.tokenType !== 'refresh' || !payload.sid || !payload.uid) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid || 'unknown',
+        familyId: 'unknown',
+        sessionId: payload.sid || 'unknown',
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        wasSuccessful: false,
+        failureReason: 'Invalid token payload',
+      });
       return err(Errors.invalidRefreshToken());
     }
 
@@ -145,6 +159,15 @@ export class AuthService {
       rawRefreshToken,
     );
     if (sessionValidationResult.isErr()) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid,
+        familyId: 'unknown',
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        wasSuccessful: false,
+        failureReason: 'Session validation failed',
+      });
       return err(sessionValidationResult.error);
     }
     const currentSession = sessionValidationResult.value;
@@ -161,6 +184,15 @@ export class AuthService {
       newSessionId,
     );
     if (signingResult.isErr()) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid,
+        familyId: String(currentSession.familyId),
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        wasSuccessful: false,
+        failureReason: 'Token signing failed',
+      });
       return err(signingResult.error);
     }
 
@@ -170,8 +202,26 @@ export class AuthService {
       newRefreshToken: signingResult.value.refreshToken,
     });
     if (rotationResult.isErr()) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid,
+        familyId: String(currentSession.familyId),
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        wasSuccessful: false,
+        failureReason: 'Session rotation failed',
+      });
       return err(rotationResult.error);
     }
+
+    await this.refreshEventService.logRefreshEvent({
+      userId: payload.uid,
+      familyId: String(currentSession.familyId),
+      sessionId: newSessionId,
+      ipAddress: clientInfo?.ipAddress,
+      userAgent: clientInfo?.userAgent,
+      wasSuccessful: true,
+    });
 
     return ok(this.toAuthTokens(signingResult.value));
   }
@@ -218,6 +268,30 @@ export class AuthService {
       return err(
         Errors.databaseError('Failed to revoke all sessions', originalError),
       );
+    }
+  }
+
+  async logoutWithAccessToken(
+    jti: string,
+    userId: string,
+  ): Promise<Result<void, AppError>> {
+    try {
+      const blacklistResult = await this.tokenBlacklistService.addToBlacklist(
+        jti,
+        this.appConfigService.jwtAccessExpiresInSeconds,
+      );
+      if (blacklistResult.isErr()) {
+        return err(blacklistResult.error);
+      }
+
+      await this.revokeAllSessionsByUser(userId);
+
+      return ok(undefined);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Failed to logout with access token: ${originalError.message}`);
+      return err(Errors.internalError(originalError));
     }
   }
 

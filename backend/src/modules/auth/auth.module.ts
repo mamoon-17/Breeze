@@ -9,15 +9,20 @@ import { JwtRefreshStrategy } from './strategy/jwt-refresh.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
 import { UserModule } from '../user/user.module';
+import { RedisModule } from '../redis/redis.module';
 import { RefreshSession } from './refresh-session.entity';
+import { RefreshEvent } from './refresh-event.entity';
 import { RefreshSessionCleanupService } from './refresh-session-cleanup.service';
+import { RefreshEventService } from './refresh-event.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { OriginCheckMiddleware } from './middlewares/origin-check.middleware';
 
 @Module({
   imports: [
     JwtModule.register({}),
     UserModule,
-    TypeOrmModule.forFeature([RefreshSession]),
+    RedisModule,
+    TypeOrmModule.forFeature([RefreshSession, RefreshEvent]),
   ],
   controllers: [AuthController],
   providers: [
@@ -28,6 +33,8 @@ import { OriginCheckMiddleware } from './middlewares/origin-check.middleware';
     JwtRefreshAuthGuard,
     AuthService,
     RefreshSessionCleanupService,
+    RefreshEventService,
+    TokenBlacklistService,
   ],
   exports: [AuthService, JwtAuthGuard, JwtRefreshAuthGuard],
 })

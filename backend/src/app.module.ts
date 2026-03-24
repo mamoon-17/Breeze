@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AppConfigModule } from './config/app-config.module';
 import { AppConfigService } from './config/app-config.service';
+import { RedisModule } from './modules/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UserModule } from './modules/user/user.module';
 
@@ -17,6 +18,7 @@ import { UserModule } from './modules/user/user.module';
     }),
     ScheduleModule.forRoot(),
     AppConfigModule,
+    RedisModule,
     TypeOrmModule.forRootAsync({
       inject: [AppConfigService],
       useFactory: (

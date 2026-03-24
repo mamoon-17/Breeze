@@ -128,6 +128,22 @@ export class AppConfigService {
     return ['http://localhost:3000', 'http://localhost:3001'];
   }
 
+  get redisHost(): string {
+    return this.configService.get<string>('REDIS_HOST') ?? 'localhost';
+  }
+
+  get redisPort(): number {
+    return Number(this.configService.get<string>('REDIS_PORT')) || 6379;
+  }
+
+  get redisPassword(): string | undefined {
+    return this.configService.get<string>('REDIS_PASSWORD');
+  }
+
+  get redisDb(): number {
+    return Number(this.configService.get<string>('REDIS_DB')) || 0;
+  }
+
   /**
    * Get required env var with Result type
    * Returns Result<string, AppError> instead of throwing
