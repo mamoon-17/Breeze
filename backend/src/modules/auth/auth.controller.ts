@@ -5,14 +5,14 @@ import { toHttpException } from '../../common/errors/error-handler';
 import { Errors } from '../../common/errors/app-error';
 import { Profile } from 'passport-google-oauth20';
 import { AuthService } from './auth.service';
-import type { AuthTokens } from './types/auth.types';
-import type {
-  RequestWithJwtAccessPayload,
-  RequestWithJwtRefreshPayload,
-} from './types/auth-request.types';
+import type { AuthTokens, JwtRefreshPayload } from './types/auth.types';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
 import { AppConfigService } from '../../config/app-config.service';
+import { User } from './decorators/current-user.decorator';
+import { RefreshPayload } from './decorators/current-refresh-payload.decorator';
+import { RefreshToken } from './decorators/refresh-token.decorator';
+import { User as UserEntity } from '../user/user.entity';
 
 @Controller('auth')
 export class AuthController {
@@ -60,25 +60,25 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
-  getMe(@Req() req: RequestWithJwtAccessPayload) {
+  getMe(@User() user: UserEntity) {
     return {
-      user: req.user,
+      user,
     };
   }
 
   @Post('refresh')
   @UseGuards(JwtRefreshAuthGuard)
   async refresh(
-    @Req() req: RequestWithJwtRefreshPayload,
+    @RefreshPayload() payload: JwtRefreshPayload,
+    @RefreshToken() rawRefreshToken: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const rawRefreshToken = this.extractRefreshToken(req);
     if (!rawRefreshToken) {
       throw toHttpException(Errors.invalidRefreshToken());
     }
 
     const tokensResult = await this.authService.refreshTokens(
-      req.user,
+      payload,
       rawRefreshToken,
     );
     if (tokensResult.isErr()) {
@@ -95,16 +95,16 @@ export class AuthController {
   @Post('logout')
   @UseGuards(JwtRefreshAuthGuard)
   async logout(
-    @Req() req: RequestWithJwtRefreshPayload,
+    @RefreshPayload() payload: JwtRefreshPayload,
+    @RefreshToken() rawRefreshToken: string | undefined,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const rawRefreshToken = this.extractRefreshToken(req);
     if (!rawRefreshToken) {
       throw toHttpException(Errors.invalidRefreshToken());
     }
 
     const result = await this.authService.logoutSession(
-      req.user,
+      payload,
       rawRefreshToken,
     );
     if (result.isErr()) {
@@ -120,10 +120,10 @@ export class AuthController {
   @Post('logout-all')
   @UseGuards(JwtAuthGuard)
   async logoutAll(
-    @Req() req: RequestWithJwtAccessPayload,
+    @User() user: UserEntity,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.logoutAllSessions(req.user.uid);
+    const result = await this.authService.logoutAllSessions(user.id);
     if (result.isErr()) {
       throw toHttpException(result.error);
     }
@@ -166,20 +166,4 @@ export class AuthController {
     });
   }
 
-  private extractRefreshToken(
-    req: RequestWithJwtRefreshPayload,
-  ): string | undefined {
-    const requestRecord = req as unknown as {
-      cookies?: Record<string, unknown>;
-      body?: Record<string, unknown>;
-    };
-
-    const cookieToken = requestRecord.cookies?.refreshToken;
-    if (typeof cookieToken === 'string') {
-      return cookieToken;
-    }
-
-    const bodyToken = requestRecord.body?.refreshToken;
-    return typeof bodyToken === 'string' ? bodyToken : undefined;
-  }
 }

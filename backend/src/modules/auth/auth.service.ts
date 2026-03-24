@@ -374,6 +374,7 @@ export class AuthService {
   ): Promise<Result<{ accessToken: string; refreshToken: string }, AppError>> {
     try {
       const accessPayload: JwtAccessPayload = {
+        jti: randomUUID(),
         sub: subject.providerId,
         uid: subject.userId,
         email: subject.email,

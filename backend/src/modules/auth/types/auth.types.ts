@@ -9,6 +9,7 @@ export interface AuthUser {
 }
 
 export interface JwtAccessPayload {
+  jti: string;
   sub: string;
   uid: string;
   email: string;
