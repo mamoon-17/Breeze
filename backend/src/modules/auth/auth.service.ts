@@ -8,6 +8,11 @@ import { compare, hash } from 'bcryptjs';
 import { IsNull, Repository } from 'typeorm';
 import { AppConfigService } from '../../config/app-config.service';
 import { UserService } from '../user/user.service';
+import { TokenBlacklistService } from './token-blacklist.service';
+import { RefreshEventService } from './refresh-event.service';
+import { AnomalyDetectionService } from './anomaly-detection.service';
+import { NotificationService } from './notification.service';
+import { RiskAssessment } from './types/anomaly-detection.types';
 import { User } from '../user/user.entity';
 import { AppError, Errors } from '../../common/errors/app-error';
 import {
@@ -17,6 +22,7 @@ import {
   JwtRefreshPayload,
 } from './types/auth.types';
 import { RefreshSession } from './refresh-session.entity';
+import { RiskLevel } from './refresh-event.entity';
 
 const REFRESH_TOKEN_BCRYPT_ROUNDS = 10;
 
@@ -34,6 +40,11 @@ interface SessionSeed {
   absoluteExpiresAt: Date;
 }
 
+export interface RefreshTokensResult extends AuthTokens {
+  requiresStepUp?: boolean;
+  riskLevel?: RiskLevel;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -42,6 +53,10 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly appConfigService: AppConfigService,
     private readonly userService: UserService,
+    private readonly tokenBlacklistService: TokenBlacklistService,
+    private readonly refreshEventService: RefreshEventService,
+    private readonly anomalyDetectionService: AnomalyDetectionService,
+    private readonly notificationService: NotificationService,
     @InjectRepository(RefreshSession)
     private readonly refreshSessionRepository: Repository<RefreshSession>,
   ) {}
@@ -93,6 +108,7 @@ export class AuthService {
    */
   async issueTokens(
     subject: TokenSubject,
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string },
   ): Promise<Result<AuthTokens, AppError>> {
     try {
       const sessionSeed: SessionSeed = {
@@ -115,10 +131,14 @@ export class AuthService {
         familyId: sessionSeed.familyId,
         absoluteExpiresAt: sessionSeed.absoluteExpiresAt,
         refreshToken: signingResult.value.refreshToken,
+        accessTokenJti: signingResult.value.accessTokenJti,
+        clientInfo,
       });
       if (sessionCreateResult.isErr()) {
         return err(sessionCreateResult.error);
       }
+
+      this.sendNewSessionNotification(subject, sessionSeed.familyId, clientInfo);
 
       return ok(this.toAuthTokens(signingResult.value));
     } catch (error) {
@@ -128,15 +148,50 @@ export class AuthService {
     }
   }
 
+  private sendNewSessionNotification(
+    subject: TokenSubject,
+    familyId: string,
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string },
+  ): void {
+    try {
+      this.notificationService.sendSecurityNotification({
+        type: 'new_session',
+        userId: subject.userId,
+        email: subject.email,
+        familyId,
+        ipPrefix: this.refreshEventService.getIpPrefixPublic(clientInfo?.ipAddress) || undefined,
+        country: clientInfo?.country,
+        userAgent: clientInfo?.userAgent,
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send new session notification: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   /**
    * Refresh JWT tokens using a refresh token payload
-   * Returns Result<AuthTokens, AppError> instead of throwing
+   * Returns Result<RefreshTokensResult, AppError> instead of throwing
+   * Includes anomaly detection and risk-based actions
    */
   async refreshTokens(
     payload: JwtRefreshPayload,
     rawRefreshToken: string,
-  ): Promise<Result<AuthTokens, AppError>> {
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string; isVpnOrProxy?: boolean },
+  ): Promise<Result<RefreshTokensResult, AppError>> {
     if (payload.tokenType !== 'refresh' || !payload.sid || !payload.uid) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid || 'unknown',
+        familyId: 'unknown',
+        sessionId: payload.sid || 'unknown',
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        country: clientInfo?.country,
+        wasSuccessful: false,
+        failureReason: 'Invalid token payload',
+      });
       return err(Errors.invalidRefreshToken());
     }
 
@@ -145,11 +200,91 @@ export class AuthService {
       rawRefreshToken,
     );
     if (sessionValidationResult.isErr()) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid,
+        familyId: 'unknown',
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        country: clientInfo?.country,
+        wasSuccessful: false,
+        failureReason: 'Session validation failed',
+      });
       return err(sessionValidationResult.error);
     }
     const currentSession = sessionValidationResult.value;
+    const familyId = String(currentSession.familyId);
+
+    let riskAssessment: RiskAssessment | null = null;
+    if (this.appConfigService.anomalyDetectionEnabled) {
+      riskAssessment = await this.anomalyDetectionService.assessRisk({
+        userId: payload.uid,
+        familyId,
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        country: clientInfo?.country,
+        isVpnOrProxy: clientInfo?.isVpnOrProxy,
+      });
+
+      if (riskAssessment.shouldRevoke) {
+        await this.refreshEventService.logRefreshEvent({
+          userId: payload.uid,
+          familyId,
+          sessionId: payload.sid,
+          ipAddress: clientInfo?.ipAddress,
+          userAgent: clientInfo?.userAgent,
+          country: clientInfo?.country,
+          wasSuccessful: false,
+          failureReason: 'High risk activity detected',
+          riskScore: riskAssessment.riskScore,
+          riskLevel: riskAssessment.riskLevel,
+          anomalySignals: riskAssessment.signals,
+          isVpnOrProxy: clientInfo?.isVpnOrProxy,
+        });
+
+        const jtisToBlacklist =
+          await this.anomalyDetectionService.revokeFamilyWithBlacklist(
+            payload.uid,
+            familyId,
+          );
+        for (const jti of jtisToBlacklist) {
+          await this.tokenBlacklistService.addToBlacklist(
+            jti,
+            this.appConfigService.jwtAccessExpiresInSeconds,
+          );
+        }
+
+        this.sendHighRiskNotification(
+          payload.uid,
+          payload.email,
+          riskAssessment,
+          clientInfo,
+        );
+
+        return err(
+          Errors.highRiskSession(
+            riskAssessment.riskScore,
+            this.notificationService.formatSignalsForNotification(
+              riskAssessment.signals as Record<string, boolean>,
+            ),
+          ),
+        );
+      }
+    }
+
+    if (currentSession.currentAccessTokenJti) {
+      await this.tokenBlacklistService.addToBlacklist(
+        currentSession.currentAccessTokenJti,
+        this.appConfigService.jwtAccessExpiresInSeconds,
+      );
+    }
 
     const newSessionId = randomUUID();
+    const accessTokenTtl =
+      riskAssessment?.accessTokenTtlOverride ||
+      this.appConfigService.jwtAccessExpiresInSeconds;
+
     const signingResult = await this.signTokens(
       {
         userId: payload.uid,
@@ -159,8 +294,23 @@ export class AuthService {
         displayName: payload.email,
       },
       newSessionId,
+      accessTokenTtl,
     );
     if (signingResult.isErr()) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid,
+        familyId,
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        country: clientInfo?.country,
+        wasSuccessful: false,
+        failureReason: 'Token signing failed',
+        riskScore: riskAssessment?.riskScore,
+        riskLevel: riskAssessment?.riskLevel,
+        anomalySignals: riskAssessment?.signals,
+        isVpnOrProxy: clientInfo?.isVpnOrProxy,
+      });
       return err(signingResult.error);
     }
 
@@ -168,17 +318,121 @@ export class AuthService {
       currentSession,
       newSessionId,
       newRefreshToken: signingResult.value.refreshToken,
+      newAccessTokenJti: signingResult.value.accessTokenJti,
+      clientInfo,
+      requiresStepUp: riskAssessment?.shouldRequireStepUp,
     });
     if (rotationResult.isErr()) {
+      await this.refreshEventService.logRefreshEvent({
+        userId: payload.uid,
+        familyId,
+        sessionId: payload.sid,
+        ipAddress: clientInfo?.ipAddress,
+        userAgent: clientInfo?.userAgent,
+        country: clientInfo?.country,
+        wasSuccessful: false,
+        failureReason: 'Session rotation failed',
+        riskScore: riskAssessment?.riskScore,
+        riskLevel: riskAssessment?.riskLevel,
+        anomalySignals: riskAssessment?.signals,
+        isVpnOrProxy: clientInfo?.isVpnOrProxy,
+      });
       return err(rotationResult.error);
     }
 
-    return ok(this.toAuthTokens(signingResult.value));
+    await this.refreshEventService.logRefreshEvent({
+      userId: payload.uid,
+      familyId,
+      sessionId: newSessionId,
+      ipAddress: clientInfo?.ipAddress,
+      userAgent: clientInfo?.userAgent,
+      country: clientInfo?.country,
+      wasSuccessful: true,
+      riskScore: riskAssessment?.riskScore || 0,
+      riskLevel: riskAssessment?.riskLevel || RiskLevel.LOW,
+      anomalySignals: riskAssessment?.signals,
+      isVpnOrProxy: clientInfo?.isVpnOrProxy,
+    });
+
+    if (riskAssessment?.shouldRequireStepUp) {
+      this.sendMediumRiskNotification(
+        payload.uid,
+        payload.email,
+        riskAssessment,
+        clientInfo,
+      );
+    }
+
+    const result: RefreshTokensResult = {
+      ...this.toAuthTokens(signingResult.value, accessTokenTtl),
+      requiresStepUp: riskAssessment?.shouldRequireStepUp,
+      riskLevel: riskAssessment?.riskLevel,
+    };
+
+    return ok(result);
+  }
+
+  private sendHighRiskNotification(
+    userId: string,
+    email: string,
+    riskAssessment: RiskAssessment,
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string },
+  ): void {
+    try {
+      this.notificationService.sendSecurityNotification({
+        type: 'forced_logout',
+        userId,
+        email,
+        ipPrefix: this.refreshEventService.getIpPrefixPublic(clientInfo?.ipAddress) || undefined,
+        country: clientInfo?.country,
+        userAgent: clientInfo?.userAgent,
+        timestamp: new Date(),
+        riskLevel: RiskLevel.HIGH,
+        riskScore: riskAssessment.riskScore,
+        reason: 'High-risk activity detected during token refresh',
+        signals: this.notificationService.formatSignalsForNotification(
+          riskAssessment.signals as Record<string, boolean>,
+        ),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send high-risk notification: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private sendMediumRiskNotification(
+    userId: string,
+    email: string,
+    riskAssessment: RiskAssessment,
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string },
+  ): void {
+    try {
+      this.notificationService.sendSecurityNotification({
+        type: 'suspicious_activity',
+        userId,
+        email,
+        ipPrefix: this.refreshEventService.getIpPrefixPublic(clientInfo?.ipAddress) || undefined,
+        country: clientInfo?.country,
+        userAgent: clientInfo?.userAgent,
+        timestamp: new Date(),
+        riskLevel: RiskLevel.MEDIUM,
+        riskScore: riskAssessment.riskScore,
+        signals: this.notificationService.formatSignalsForNotification(
+          riskAssessment.signals as Record<string, boolean>,
+        ),
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to send medium-risk notification: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   async logoutSession(
     payload: JwtRefreshPayload,
     rawRefreshToken: string,
+    accessTokenJti?: string,
   ): Promise<Result<void, AppError>> {
     if (payload.tokenType !== 'refresh' || !payload.sid || !payload.uid) {
       return err(Errors.invalidRefreshToken());
@@ -192,7 +446,26 @@ export class AuthService {
       return err(sessionValidationResult.error);
     }
 
+    const currentSession = sessionValidationResult.value;
+
     try {
+      // Blacklist the current access token if provided
+      if (accessTokenJti) {
+        await this.tokenBlacklistService.addToBlacklist(
+          accessTokenJti,
+          this.appConfigService.jwtAccessExpiresInSeconds,
+        );
+      }
+
+      // Also blacklist the tracked access token from the session
+      if (currentSession.currentAccessTokenJti) {
+        await this.tokenBlacklistService.addToBlacklist(
+          currentSession.currentAccessTokenJti,
+          this.appConfigService.jwtAccessExpiresInSeconds,
+        );
+      }
+
+      // Revoke this specific session
       await this.refreshSessionRepository.update(
         { id: payload.sid, userId: payload.uid },
         { revokedAt: new Date() },
@@ -218,6 +491,50 @@ export class AuthService {
       return err(
         Errors.databaseError('Failed to revoke all sessions', originalError),
       );
+    }
+  }
+
+  async logoutWithAccessToken(
+    jti: string,
+    userId: string,
+  ): Promise<Result<void, AppError>> {
+    try {
+      // Get all active sessions for this user
+      const sessions = await this.refreshSessionRepository.find({
+        where: {
+          userId,
+          revokedAt: IsNull(),
+        },
+      });
+
+      // Blacklist the current access token
+      const blacklistResult = await this.tokenBlacklistService.addToBlacklist(
+        jti,
+        this.appConfigService.jwtAccessExpiresInSeconds,
+      );
+      if (blacklistResult.isErr()) {
+        return err(blacklistResult.error);
+      }
+
+      // Blacklist all other access tokens from active sessions
+      for (const session of sessions) {
+        if (session.currentAccessTokenJti) {
+          await this.tokenBlacklistService.addToBlacklist(
+            session.currentAccessTokenJti,
+            this.appConfigService.jwtAccessExpiresInSeconds,
+          );
+        }
+      }
+
+      // Revoke all refresh sessions
+      await this.revokeAllSessionsByUser(userId);
+
+      return ok(undefined);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      this.logger.error(`Failed to logout with access token: ${originalError.message}`);
+      return err(Errors.internalError(originalError));
     }
   }
 
@@ -280,15 +597,27 @@ export class AuthService {
     familyId: string;
     absoluteExpiresAt: Date;
     refreshToken: string;
+    accessTokenJti: string;
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string };
   }): Promise<Result<void, AppError>> {
     try {
+      const userAgentHash = input.clientInfo?.userAgent
+        ? this.refreshEventService.hashUserAgentPublic(input.clientInfo.userAgent)
+        : null;
+
       await this.refreshSessionRepository.insert({
         id: input.id,
         userId: input.userId,
         familyId: input.familyId,
         tokenHash: await this.hashRefreshToken(input.refreshToken),
+        currentAccessTokenJti: input.accessTokenJti,
         expiresAt: this.computeRefreshSessionExpiry(),
         absoluteExpiresAt: input.absoluteExpiresAt,
+        requiresStepUp: false,
+        lastKnownCountry: input.clientInfo?.country || null,
+        lastKnownUserAgentHash: userAgentHash,
+        userAgentRaw: input.clientInfo?.userAgent || null,
+        ipPrefix: this.refreshEventService.getIpPrefixPublic(input.clientInfo?.ipAddress),
       });
       return ok(undefined);
     } catch (error) {
@@ -304,6 +633,9 @@ export class AuthService {
     currentSession: RefreshSession;
     newSessionId: string;
     newRefreshToken: string;
+    newAccessTokenJti: string;
+    clientInfo?: { ipAddress?: string; userAgent?: string; country?: string };
+    requiresStepUp?: boolean;
   }): Promise<Result<void, AppError>> {
     const now = new Date();
     const currentSessionUserId = String(input.currentSession.userId);
@@ -314,6 +646,9 @@ export class AuthService {
 
     try {
       const newTokenHash = await this.hashRefreshToken(input.newRefreshToken);
+      const userAgentHash = input.clientInfo?.userAgent
+        ? this.refreshEventService.hashUserAgentPublic(input.clientInfo.userAgent)
+        : null;
 
       await this.refreshSessionRepository.manager.transaction(
         async (manager) => {
@@ -341,8 +676,14 @@ export class AuthService {
             userId: currentSessionUserId,
             familyId: currentSessionFamilyId,
             tokenHash: newTokenHash,
+            currentAccessTokenJti: input.newAccessTokenJti,
             expiresAt: this.computeRefreshSessionExpiry(),
             absoluteExpiresAt: currentSessionAbsoluteExpiresAt,
+            requiresStepUp: input.requiresStepUp || false,
+            lastKnownCountry: input.clientInfo?.country || null,
+            lastKnownUserAgentHash: userAgentHash,
+            userAgentRaw: input.clientInfo?.userAgent || null,
+            ipPrefix: this.refreshEventService.getIpPrefixPublic(input.clientInfo?.ipAddress),
           });
         },
       );
@@ -371,9 +712,12 @@ export class AuthService {
   private async signTokens(
     subject: TokenSubject,
     sessionId: string,
-  ): Promise<Result<{ accessToken: string; refreshToken: string }, AppError>> {
+    accessTokenTtlOverride?: number,
+  ): Promise<Result<{ accessToken: string; refreshToken: string; accessTokenJti: string }, AppError>> {
     try {
+      const accessTokenJti = randomUUID();
       const accessPayload: JwtAccessPayload = {
+        jti: accessTokenJti,
         sub: subject.providerId,
         uid: subject.userId,
         email: subject.email,
@@ -389,10 +733,13 @@ export class AuthService {
         tokenType: 'refresh',
       };
 
+      const accessTokenTtl =
+        accessTokenTtlOverride || this.appConfigService.jwtAccessExpiresInSeconds;
+
       const [accessToken, refreshToken] = await Promise.all([
         this.jwtService.signAsync(accessPayload, {
           secret: this.appConfigService.jwtAccessSecret,
-          expiresIn: this.appConfigService.jwtAccessExpiresInSeconds,
+          expiresIn: accessTokenTtl,
         }),
         this.jwtService.signAsync(refreshPayload, {
           secret: this.appConfigService.jwtRefreshSecret,
@@ -400,7 +747,7 @@ export class AuthService {
         }),
       ]);
 
-      return ok({ accessToken, refreshToken });
+      return ok({ accessToken, refreshToken, accessTokenJti });
     } catch (error) {
       const originalError =
         error instanceof Error ? error : new Error(String(error));
@@ -408,14 +755,18 @@ export class AuthService {
     }
   }
 
-  private toAuthTokens(tokens: {
-    accessToken: string;
-    refreshToken: string;
-  }): AuthTokens {
+  private toAuthTokens(
+    tokens: {
+      accessToken: string;
+      refreshToken: string;
+    },
+    accessTokenTtl?: number,
+  ): AuthTokens {
+    const ttl = accessTokenTtl || this.appConfigService.jwtAccessExpiresInSeconds;
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      accessTokenExpiresIn: `${this.appConfigService.jwtAccessExpiresInSeconds}s`,
+      accessTokenExpiresIn: `${ttl}s`,
       refreshTokenExpiresIn: `${this.appConfigService.jwtRefreshExpiresInSeconds}s`,
     };
   }
@@ -478,5 +829,161 @@ export class AuthService {
 
   private async hashRefreshToken(token: string): Promise<string> {
     return hash(token, REFRESH_TOKEN_BCRYPT_ROUNDS);
+  }
+
+  /**
+   * Clear step-up requirement after successful re-authentication
+   */
+  async clearStepUpRequirement(
+    userId: string,
+    sessionId: string,
+  ): Promise<Result<void, AppError>> {
+    try {
+      await this.refreshSessionRepository.update(
+        { id: sessionId, userId },
+        { requiresStepUp: false },
+      );
+      return ok(undefined);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(
+        Errors.databaseError('Failed to clear step-up requirement', originalError),
+      );
+    }
+  }
+
+  /**
+   * Check if a session requires step-up authentication
+   */
+  async checkStepUpRequired(
+    userId: string,
+    sessionId: string,
+  ): Promise<Result<boolean, AppError>> {
+    try {
+      const session = await this.refreshSessionRepository.findOne({
+        where: { id: sessionId, userId },
+        select: ['requiresStepUp'],
+      });
+      return ok(session?.requiresStepUp || false);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(Errors.internalError(originalError));
+    }
+  }
+
+  /**
+   * Get all active session families for a user
+   */
+  async getActiveSessionFamilies(userId: string): Promise<
+    Result<
+      {
+        familyId: string;
+        createdAt: Date;
+        lastActivity: Date;
+        ipPrefix: string | null;
+        country: string | null;
+        userAgentRaw: string | null;
+        requiresStepUp: boolean;
+      }[],
+      AppError
+    >
+  > {
+    try {
+      const families =
+        await this.anomalyDetectionService.getActiveSessionFamilies(userId);
+      return ok(families);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(Errors.internalError(originalError));
+    }
+  }
+
+  /**
+   * Revoke a specific session family for a user
+   */
+  async revokeSessionFamilyByUser(
+    userId: string,
+    familyId: string,
+  ): Promise<Result<void, AppError>> {
+    try {
+      const jtisToBlacklist =
+        await this.anomalyDetectionService.revokeFamilyWithBlacklist(
+          userId,
+          familyId,
+        );
+      for (const jti of jtisToBlacklist) {
+        await this.tokenBlacklistService.addToBlacklist(
+          jti,
+          this.appConfigService.jwtAccessExpiresInSeconds,
+        );
+      }
+      return ok(undefined);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(
+        Errors.databaseError('Failed to revoke session family', originalError),
+      );
+    }
+  }
+
+  /**
+   * Revoke all session families for a user except the current one
+   */
+  async revokeOtherSessionFamilies(
+    userId: string,
+    currentFamilyId: string,
+  ): Promise<Result<void, AppError>> {
+    try {
+      const activeSessions = await this.refreshSessionRepository.find({
+        where: {
+          userId,
+          revokedAt: IsNull(),
+        },
+      });
+
+      const otherFamilyIds = new Set<string>();
+      for (const session of activeSessions) {
+        if (session.familyId !== currentFamilyId) {
+          otherFamilyIds.add(session.familyId);
+        }
+      }
+
+      for (const familyId of otherFamilyIds) {
+        await this.revokeSessionFamilyByUser(userId, familyId);
+      }
+
+      return ok(undefined);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(
+        Errors.databaseError('Failed to revoke other families', originalError),
+      );
+    }
+  }
+
+  /**
+   * Get session by sessionId for the refresh payload
+   */
+  async getSessionByRefreshPayload(
+    payload: JwtRefreshPayload,
+  ): Promise<Result<RefreshSession | null, AppError>> {
+    try {
+      const session = await this.refreshSessionRepository.findOne({
+        where: {
+          id: payload.sid,
+          userId: payload.uid,
+        },
+      });
+      return ok(session);
+    } catch (error) {
+      const originalError =
+        error instanceof Error ? error : new Error(String(error));
+      return err(Errors.internalError(originalError));
+    }
   }
 }

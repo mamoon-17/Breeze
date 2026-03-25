@@ -23,6 +23,9 @@ export class RefreshSession {
   @Column({ type: 'varchar', length: 128 })
   tokenHash: string;
 
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  currentAccessTokenJti: string | null;
+
   @Index()
   @Column({ type: 'timestamptz' })
   expiresAt: Date;
@@ -40,6 +43,21 @@ export class RefreshSession {
 
   @Column({ type: 'timestamptz', nullable: true })
   revokedAt?: Date;
+
+  @Column({ type: 'boolean', default: false })
+  requiresStepUp: boolean;
+
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  lastKnownCountry: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  lastKnownUserAgentHash: string | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  userAgentRaw: string | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  ipPrefix: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -16,6 +16,11 @@ export enum ErrorCode {
   MISSING_EMAIL = 'MISSING_EMAIL',
   INVALID_TOKEN_TYPE = 'INVALID_TOKEN_TYPE',
 
+  // Anomaly detection errors
+  HIGH_RISK_SESSION = 'HIGH_RISK_SESSION',
+  STEP_UP_REQUIRED = 'STEP_UP_REQUIRED',
+  SESSION_FAMILY_REVOKED = 'SESSION_FAMILY_REVOKED',
+
   // User errors
   USER_NOT_FOUND = 'USER_NOT_FOUND',
   USER_CREATION_FAILED = 'USER_CREATION_FAILED',
@@ -100,6 +105,30 @@ export const Errors = {
       `Invalid token type: expected ${expected}, received ${received}`,
       401,
       { expected, received },
+    ),
+
+  highRiskSession: (riskScore: number, signals: string[]): AppError =>
+    createError(
+      ErrorCode.HIGH_RISK_SESSION,
+      'Session terminated due to high-risk activity',
+      401,
+      { riskScore, signals, requiresReauth: true },
+    ),
+
+  stepUpRequired: (riskScore: number): AppError =>
+    createError(
+      ErrorCode.STEP_UP_REQUIRED,
+      'Step-up authentication required for this action',
+      403,
+      { riskScore, stepUpUrl: '/auth/step-up' },
+    ),
+
+  sessionFamilyRevoked: (familyId: string): AppError =>
+    createError(
+      ErrorCode.SESSION_FAMILY_REVOKED,
+      'Session family has been revoked',
+      401,
+      { familyId },
     ),
 
   userNotFound: (): AppError =>

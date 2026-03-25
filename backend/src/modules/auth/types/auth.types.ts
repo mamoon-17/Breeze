@@ -9,6 +9,7 @@ export interface AuthUser {
 }
 
 export interface JwtAccessPayload {
+  jti: string;
   sub: string;
   uid: string;
   email: string;
@@ -30,4 +31,11 @@ export interface AuthTokens {
   refreshToken: string;
   accessTokenExpiresIn: string;
   refreshTokenExpiresIn: string;
+}
+
+export interface ExtendedClientInfo {
+  ipAddress?: string;
+  userAgent?: string;
+  country?: string;
+  isVpnOrProxy?: boolean;
 }
