@@ -116,6 +116,57 @@ export class AppConfigService {
     );
   }
 
+  get anomalyDetectionEnabled(): boolean {
+    return (
+      this.configService.get<string>('ANOMALY_DETECTION_ENABLED') !== 'false'
+    );
+  }
+
+  get anomalyStepUpAccessTokenTtl(): number {
+    return (
+      Number(this.configService.get<string>('ANOMALY_STEPUP_ACCESS_TOKEN_TTL')) ||
+      120
+    );
+  }
+
+  get impossibleTravelMinutes(): number {
+    return (
+      Number(this.configService.get<string>('IMPOSSIBLE_TRAVEL_MINUTES')) || 60
+    );
+  }
+
+  get rapidRefreshWindowMs(): number {
+    return (
+      Number(this.configService.get<string>('RAPID_REFRESH_WINDOW_MS')) ||
+      2 * 60 * 1000
+    );
+  }
+
+  get rapidRefreshThreshold(): number {
+    return (
+      Number(this.configService.get<string>('RAPID_REFRESH_THRESHOLD')) || 3
+    );
+  }
+
+  get emailEnabled(): boolean {
+    return this.configService.get<string>('EMAIL_ENABLED') === 'true';
+  }
+
+  get smtpConfig():
+    | { host: string; port: number; user: string; pass: string; from: string }
+    | undefined {
+    const host = this.configService.get<string>('SMTP_HOST');
+    const port = Number(this.configService.get<string>('SMTP_PORT'));
+    const user = this.configService.get<string>('SMTP_USER');
+    const pass = this.configService.get<string>('SMTP_PASS');
+    const from = this.configService.get<string>('SMTP_FROM');
+
+    if (host && port && user && pass && from) {
+      return { host, port, user, pass, from };
+    }
+    return undefined;
+  }
+
   get isProduction(): boolean {
     return this.configService.get<string>('NODE_ENV') === 'production';
   }

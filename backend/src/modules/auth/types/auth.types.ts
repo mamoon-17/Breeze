@@ -32,3 +32,10 @@ export interface AuthTokens {
   accessTokenExpiresIn: string;
   refreshTokenExpiresIn: string;
 }
+
+export interface ExtendedClientInfo {
+  ipAddress?: string;
+  userAgent?: string;
+  country?: string;
+  isVpnOrProxy?: boolean;
+}

@@ -1,11 +1,11 @@
-import { Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Req, Res, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
 import { toHttpException } from '../../common/errors/error-handler';
 import { Errors } from '../../common/errors/app-error';
 import { Profile } from 'passport-google-oauth20';
-import { AuthService } from './auth.service';
+import { AuthService, RefreshTokensResult } from './auth.service';
 import type { AuthTokens, JwtRefreshPayload, JwtAccessPayload } from './types/auth.types';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
@@ -37,6 +37,7 @@ export class AuthController {
   async googleAuthCallback(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
+    @ClientInfo() clientInfo: ClientInfoType,
   ) {
     const googleProfile = req.user as unknown as Profile;
     const loginResult = await this.authService.handleGoogleLogin(googleProfile);
@@ -44,13 +45,16 @@ export class AuthController {
       throw toHttpException(loginResult.error);
     }
     const { user: dbUser, authUser } = loginResult.value;
-    const tokensResult = await this.authService.issueTokens({
-      userId: dbUser.id,
-      providerId: authUser.providerId,
-      email: authUser.email,
-      provider: authUser.provider,
-      displayName: authUser.displayName,
-    });
+    const tokensResult = await this.authService.issueTokens(
+      {
+        userId: dbUser.id,
+        providerId: authUser.providerId,
+        email: authUser.email,
+        provider: authUser.provider,
+        displayName: authUser.displayName,
+      },
+      clientInfo,
+    );
     if (tokensResult.isErr()) {
       throw toHttpException(tokensResult.error);
     }
@@ -93,10 +97,28 @@ export class AuthController {
     }
     const tokens = tokensResult.value;
     this.setAuthCookies(res, tokens);
-    return {
+    
+    const response: {
+      message: string;
+      tokens: AuthTokens;
+      requiresStepUp?: boolean;
+      riskLevel?: string;
+    } = {
       message: 'Token refreshed successfully',
-      tokens,
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        accessTokenExpiresIn: tokens.accessTokenExpiresIn,
+        refreshTokenExpiresIn: tokens.refreshTokenExpiresIn,
+      },
     };
+
+    if (tokens.requiresStepUp) {
+      response.requiresStepUp = true;
+      response.riskLevel = tokens.riskLevel;
+    }
+
+    return response;
   }
 
   @Post('logout')
@@ -196,4 +218,188 @@ export class AuthController {
     });
   }
 
+  /**
+   * Check if step-up authentication is required for the current session
+   */
+  @Get('step-up/status')
+  @UseGuards(JwtRefreshAuthGuard)
+  async getStepUpStatus(@RefreshPayload() payload: JwtRefreshPayload) {
+    const result = await this.authService.checkStepUpRequired(
+      payload.uid,
+      payload.sid,
+    );
+    if (result.isErr()) {
+      throw toHttpException(result.error);
+    }
+    return {
+      requiresStepUp: result.value,
+    };
+  }
+
+  /**
+   * Initiate step-up authentication via Google OAuth
+   * This redirects to Google for re-authentication
+   */
+  @Get('step-up')
+  @UseGuards(AuthGuard('google'))
+  stepUp() {
+    // Guard redirects to Google OAuth for re-authentication
+  }
+
+  /**
+   * Handle step-up authentication callback
+   * Clears the step-up requirement after successful re-authentication
+   */
+  @Get('step-up/callback')
+  @UseGuards(AuthGuard('google'))
+  async stepUpCallback(
+    @Req() req: Request,
+    @RefreshPayload() payload: JwtRefreshPayload,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const googleProfile = req.user as unknown as Profile;
+    
+    const loginResult = await this.authService.handleGoogleLogin(googleProfile);
+    if (loginResult.isErr()) {
+      throw toHttpException(loginResult.error);
+    }
+
+    const { user: dbUser } = loginResult.value;
+
+    if (dbUser.id !== payload.uid) {
+      throw toHttpException(
+        Errors.forbidden('Step-up authentication must use the same account'),
+      );
+    }
+
+    const sessionResult = await this.authService.getSessionByRefreshPayload(payload);
+    if (sessionResult.isErr()) {
+      throw toHttpException(sessionResult.error);
+    }
+
+    const session = sessionResult.value;
+    if (!session) {
+      throw toHttpException(Errors.invalidRefreshToken());
+    }
+
+    const clearResult = await this.authService.clearStepUpRequirement(
+      payload.uid,
+      session.id,
+    );
+    if (clearResult.isErr()) {
+      throw toHttpException(clearResult.error);
+    }
+
+    return {
+      message: 'Step-up authentication successful',
+      requiresStepUp: false,
+    };
+  }
+
+  /**
+   * Get all active session families for the current user
+   */
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  async getSessions(@User() user: UserEntity) {
+    const result = await this.authService.getActiveSessionFamilies(user.id);
+    if (result.isErr()) {
+      throw toHttpException(result.error);
+    }
+    return {
+      sessions: result.value.map((family) => ({
+        familyId: family.familyId,
+        createdAt: family.createdAt,
+        lastActivity: family.lastActivity,
+        location: family.country || 'Unknown',
+        ipPrefix: family.ipPrefix,
+        device: this.summarizeUserAgent(family.userAgentRaw),
+        requiresStepUp: family.requiresStepUp,
+      })),
+    };
+  }
+
+  /**
+   * Revoke a specific session family
+   */
+  @Delete('sessions/:familyId')
+  @UseGuards(JwtAuthGuard)
+  async revokeSessionFamily(
+    @User() user: UserEntity,
+    @Param('familyId') familyId: string,
+  ) {
+    const result = await this.authService.revokeSessionFamilyByUser(
+      user.id,
+      familyId,
+    );
+    if (result.isErr()) {
+      throw toHttpException(result.error);
+    }
+    return {
+      message: 'Session family revoked successfully',
+    };
+  }
+
+  /**
+   * Revoke all session families except the current one
+   */
+  @Post('sessions/revoke-others')
+  @UseGuards(JwtRefreshAuthGuard)
+  async revokeOtherSessions(
+    @User() user: UserEntity,
+    @RefreshPayload() payload: JwtRefreshPayload,
+  ) {
+    const sessionResult = await this.authService.getSessionByRefreshPayload(payload);
+    if (sessionResult.isErr()) {
+      throw toHttpException(sessionResult.error);
+    }
+
+    const session = sessionResult.value;
+    if (!session) {
+      throw toHttpException(Errors.invalidRefreshToken());
+    }
+
+    const result = await this.authService.revokeOtherSessionFamilies(
+      user.id,
+      session.familyId,
+    );
+    if (result.isErr()) {
+      throw toHttpException(result.error);
+    }
+    return {
+      message: 'Other sessions revoked successfully',
+    };
+  }
+
+  private summarizeUserAgent(userAgent: string | null): string {
+    if (!userAgent) return 'Unknown device';
+    
+    const lowerUA = userAgent.toLowerCase();
+
+    let browser = 'Unknown Browser';
+    if (lowerUA.includes('chrome') && !lowerUA.includes('edg')) {
+      browser = 'Chrome';
+    } else if (lowerUA.includes('firefox')) {
+      browser = 'Firefox';
+    } else if (lowerUA.includes('safari') && !lowerUA.includes('chrome')) {
+      browser = 'Safari';
+    } else if (lowerUA.includes('edg')) {
+      browser = 'Edge';
+    }
+
+    let os = 'Unknown OS';
+    if (lowerUA.includes('windows')) {
+      os = 'Windows';
+    } else if (lowerUA.includes('mac')) {
+      os = 'macOS';
+    } else if (lowerUA.includes('linux')) {
+      os = 'Linux';
+    } else if (lowerUA.includes('android')) {
+      os = 'Android';
+    } else if (lowerUA.includes('iphone') || lowerUA.includes('ipad')) {
+      os = 'iOS';
+    }
+
+    return `${browser} on ${os}`;
+  }
 }

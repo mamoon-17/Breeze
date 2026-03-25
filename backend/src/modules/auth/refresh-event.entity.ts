@@ -6,6 +6,21 @@ import {
   Index,
 } from 'typeorm';
 
+export enum RiskLevel {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+}
+
+export interface AnomalySignals {
+  impossibleTravel?: boolean;
+  countryChanged?: boolean;
+  userAgentChanged?: boolean;
+  rapidRefreshes?: boolean;
+  unusualHour?: boolean;
+  vpnOrProxyDetected?: boolean;
+}
+
 @Entity('refresh_events')
 @Index(['userId', 'createdAt'])
 @Index(['familyId', 'createdAt'])
@@ -28,6 +43,9 @@ export class RefreshEvent {
   @Column({ type: 'varchar', length: 50, nullable: true })
   ipPrefix: string | null;
 
+  @Column({ type: 'varchar', length: 45, nullable: true })
+  ipAddress: string | null;
+
   @Column({ type: 'varchar', length: 10, nullable: true })
   country: string | null;
 
@@ -42,6 +60,18 @@ export class RefreshEvent {
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   failureReason: string | null;
+
+  @Column({ type: 'int', default: 0 })
+  riskScore: number;
+
+  @Column({ type: 'varchar', length: 10, default: RiskLevel.LOW })
+  riskLevel: RiskLevel;
+
+  @Column({ type: 'jsonb', nullable: true })
+  anomalySignals: AnomalySignals | null;
+
+  @Column({ type: 'boolean', default: false })
+  isVpnOrProxy: boolean;
 
   @CreateDateColumn()
   createdAt: Date;

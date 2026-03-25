@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { createHash } from 'crypto';
 import { Result, ok, err } from 'neverthrow';
 import { AppError, Errors } from '../../common/errors/app-error';
-import { RefreshEvent } from './refresh-event.entity';
+import { RefreshEvent, RiskLevel, AnomalySignals } from './refresh-event.entity';
 
 interface RefreshEventData {
   userId: string;
@@ -12,8 +12,13 @@ interface RefreshEventData {
   sessionId: string;
   ipAddress?: string;
   userAgent?: string;
+  country?: string;
   wasSuccessful: boolean;
   failureReason?: string;
+  riskScore?: number;
+  riskLevel?: RiskLevel;
+  anomalySignals?: AnomalySignals;
+  isVpnOrProxy?: boolean;
 }
 
 @Injectable()
@@ -27,35 +32,48 @@ export class RefreshEventService {
 
   async logRefreshEvent(
     data: RefreshEventData,
-  ): Promise<Result<void, AppError>> {
+  ): Promise<Result<RefreshEvent, AppError>> {
     try {
       const event = this.refreshEventRepository.create({
         userId: data.userId,
         familyId: data.familyId,
         sessionId: data.sessionId,
         ipPrefix: this.getIpPrefix(data.ipAddress),
-        country: null,
+        ipAddress: data.ipAddress || null,
+        country: data.country || null,
         userAgentHash: data.userAgent
           ? this.hashUserAgent(data.userAgent)
           : null,
         userAgentRaw: data.userAgent || null,
         wasSuccessful: data.wasSuccessful,
         failureReason: data.failureReason || null,
+        riskScore: data.riskScore || 0,
+        riskLevel: data.riskLevel || RiskLevel.LOW,
+        anomalySignals: data.anomalySignals || null,
+        isVpnOrProxy: data.isVpnOrProxy || false,
       });
 
       await this.refreshEventRepository.insert(event);
 
       this.logger.log(
-        `Refresh event logged: userId=${data.userId}, sessionId=${data.sessionId}, success=${data.wasSuccessful}`,
+        `Refresh event logged: userId=${data.userId}, sessionId=${data.sessionId}, success=${data.wasSuccessful}, riskLevel=${data.riskLevel || 'LOW'}`,
       );
 
-      return ok(undefined);
+      return ok(event);
     } catch (error) {
       const originalError =
         error instanceof Error ? error : new Error(String(error));
       this.logger.error(`Failed to log refresh event: ${originalError.message}`);
       return err(Errors.internalError(originalError));
     }
+  }
+
+  getIpPrefixPublic(ipAddress?: string): string | null {
+    return this.getIpPrefix(ipAddress);
+  }
+
+  hashUserAgentPublic(userAgent: string): string {
+    return this.hashUserAgent(userAgent);
   }
 
   private getIpPrefix(ipAddress?: string): string | null {

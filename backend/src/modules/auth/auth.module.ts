@@ -8,6 +8,7 @@ import { JwtStrategy } from './strategy/jwt.strategy';
 import { JwtRefreshStrategy } from './strategy/jwt-refresh.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
+import { StepUpRequiredGuard } from './guards/step-up-required.guard';
 import { UserModule } from '../user/user.module';
 import { RedisModule } from '../redis/redis.module';
 import { RefreshSession } from './refresh-session.entity';
@@ -15,6 +16,8 @@ import { RefreshEvent } from './refresh-event.entity';
 import { RefreshSessionCleanupService } from './refresh-session-cleanup.service';
 import { RefreshEventService } from './refresh-event.service';
 import { TokenBlacklistService } from './token-blacklist.service';
+import { AnomalyDetectionService } from './anomaly-detection.service';
+import { NotificationService } from './notification.service';
 import { OriginCheckMiddleware } from './middlewares/origin-check.middleware';
 
 @Module({
@@ -31,12 +34,21 @@ import { OriginCheckMiddleware } from './middlewares/origin-check.middleware';
     JwtRefreshStrategy,
     JwtAuthGuard,
     JwtRefreshAuthGuard,
+    StepUpRequiredGuard,
     AuthService,
     RefreshSessionCleanupService,
     RefreshEventService,
     TokenBlacklistService,
+    AnomalyDetectionService,
+    NotificationService,
   ],
-  exports: [AuthService, JwtAuthGuard, JwtRefreshAuthGuard],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+    JwtRefreshAuthGuard,
+    StepUpRequiredGuard,
+    AnomalyDetectionService,
+  ],
 })
 export class AuthModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
