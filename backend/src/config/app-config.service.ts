@@ -179,6 +179,14 @@ export class AppConfigService {
     return ['http://localhost:3000', 'http://localhost:3001'];
   }
 
+  get wsPort(): number {
+    return (
+      Number(this.configService.get<string>('WS_PORT')) ||
+      Number(this.configService.get<string>('PORT')) ||
+      3000
+    );
+  }
+
   get redisHost(): string {
     return this.configService.get<string>('REDIS_HOST') ?? 'localhost';
   }

@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Delete, Param, Req, Res, UseGuards } from '@nestjs/common';
+import { FamilyIdParamDto } from './dto/family-id-param.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
@@ -326,11 +327,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async revokeSessionFamily(
     @User() user: UserEntity,
-    @Param('familyId') familyId: string,
+    @Param() params: FamilyIdParamDto,
   ) {
     const result = await this.authService.revokeSessionFamilyByUser(
       user.id,
-      familyId,
+      params.familyId,
     );
     if (result.isErr()) {
       throw toHttpException(result.error);

@@ -1,16 +1,18 @@
 import { Controller, Get, Param } from '@nestjs/common';
 import { toHttpException } from '../../common/errors/error-handler';
-import { Errors } from '../../common/errors/app-error';
 import { User } from './user.entity';
 import { UserService } from './user.service';
+import { EmailParamDto } from './dto/email-param.dto';
+import { ProviderParamDto } from './dto/provider-param.dto';
+import { IdParamDto } from './dto/id-param.dto';
 
 @Controller('user')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
   @Get('email/:email')
-  async getByEmail(@Param('email') email: string) {
-    const result = await this.userService.findByEmail(email);
+  async getByEmail(@Param() params: EmailParamDto) {
+    const result = await this.userService.findByEmail(params.email);
     if (result.isErr()) {
       throw toHttpException(result.error);
     }
@@ -21,19 +23,10 @@ export class UserController {
   }
 
   @Get('provider/:provider/:providerId')
-  async getByProvider(
-    @Param('provider') providerParam: string,
-    @Param('providerId') providerId: string,
-  ) {
-    if (providerParam !== 'google') {
-      throw toHttpException(
-        Errors.validationFailed("provider must be 'google'"),
-      );
-    }
-
+  async getByProvider(@Param() params: ProviderParamDto) {
     const result = await this.userService.findByProviderId(
-      'google',
-      providerId,
+      params.provider,
+      params.providerId,
     );
     if (result.isErr()) {
       throw toHttpException(result.error);
@@ -45,8 +38,8 @@ export class UserController {
   }
 
   @Get(':id')
-  async getById(@Param('id') id: string) {
-    const result = await this.userService.findById(id);
+  async getById(@Param() params: IdParamDto) {
+    const result = await this.userService.findById(params.id);
     if (result.isErr()) {
       throw toHttpException(result.error);
     }
