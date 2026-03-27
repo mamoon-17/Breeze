@@ -11,6 +11,7 @@ import { RedisModule } from './modules/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UserModule } from './modules/user/user.module';
 import { SocketModule } from './modules/socket/socket.module';
+import { ConversationModule } from './modules/conversation/conversation.module';
 import { ChatModule } from './modules/chat/chat.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { ChatModule } from './modules/chat/chat.module';
       }),
     }),
     SocketModule,
+    ConversationModule,
     ChatModule,
     AuthModule,
     UserModule,

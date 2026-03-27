@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { SocketStateService } from '../socket/socket-state.service';
 import { ChatMessage } from './chat-message.entity';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -24,9 +24,28 @@ export class ChatService {
     return this.chatMessageRepository.save(message);
   }
 
-  async getRoomHistory(room: string, limit = 50): Promise<ChatMessage[]> {
+  async getRoomHistory(
+    room: string,
+    limit = 50,
+    before?: string,
+  ): Promise<ChatMessage[]> {
+    let beforeDate: Date | undefined;
+
+    if (before) {
+      const cursor = await this.chatMessageRepository.findOne({
+        where: { id: before, room },
+        select: ['createdAt'],
+      });
+      if (cursor) {
+        beforeDate = cursor.createdAt;
+      }
+    }
+
     return this.chatMessageRepository.find({
-      where: { room },
+      where: {
+        room,
+        ...(beforeDate ? { createdAt: LessThan(beforeDate) } : {}),
+      },
       order: { createdAt: 'DESC' },
       take: limit,
     });

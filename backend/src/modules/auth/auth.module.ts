@@ -48,6 +48,7 @@ import { OriginCheckMiddleware } from './middlewares/origin-check.middleware';
     JwtRefreshAuthGuard,
     StepUpRequiredGuard,
     AnomalyDetectionService,
+    TokenBlacklistService,
   ],
 })
 export class AuthModule implements NestModule {
