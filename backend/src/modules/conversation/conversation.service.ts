@@ -192,6 +192,14 @@ export class ConversationService {
     return count > 0;
   }
 
+  async getMemberUserIds(conversationId: string): Promise<string[]> {
+    const rows = await this.membershipRepository.find({
+      where: { conversationId },
+      select: ['userId'],
+    });
+    return rows.map((r) => r.userId);
+  }
+
   async getConversationsForUser(userId: string): Promise<Conversation[]> {
     return this.conversationRepository
       .createQueryBuilder('c')
@@ -215,5 +223,16 @@ export class ConversationService {
     if (!member) {
       throw new ForbiddenException('You are not a member of this conversation');
     }
+  }
+
+  async updateLastReadAt(
+    userId: string,
+    conversationId: string,
+    at: Date,
+  ): Promise<void> {
+    await this.membershipRepository.update(
+      { userId, conversationId },
+      { lastReadAt: at },
+    );
   }
 }

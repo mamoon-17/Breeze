@@ -8,9 +8,9 @@ import {
   OnGatewayDisconnect,
   OnGatewayInit,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Logger, UsePipes, ValidationPipe } from '@nestjs/common';
 import { WsException } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Server } from 'socket.io';
 import { AppConfigService } from '../../config/app-config.service';
 import { ChatService } from './chat.service';
 import { SocketStateService } from '../socket/socket-state.service';
@@ -18,6 +18,14 @@ import { ConversationService } from '../conversation/conversation.service';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 import type { AuthenticatedSocket } from '../../common/types/authenticated-socket';
 import { SendMessageDto } from './dto/send-message.dto';
+import { MarkDeliveredDto } from './dto/mark-delivered.dto';
+import { MarkReadDto } from './dto/mark-read.dto';
+
+const wsValidationPipe = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+});
 
 @WebSocketGateway()
 export class ChatGateway
@@ -81,12 +89,11 @@ export class ChatGateway
   }
 
   @SubscribeMessage('sendMessage')
+  @UsePipes(wsValidationPipe)
   async handleSendMessage(
     @MessageBody() dto: SendMessageDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
-    // Double-check membership on every message — the socket.io room set is
-    // client-side state and cannot be trusted as the sole authorization gate.
     const isMember = await this.conversationService.isMember(
       client.data.user.id,
       dto.room,
@@ -98,5 +105,56 @@ export class ChatGateway
 
     const message = await this.chatService.saveMessage(dto, client.data.user.id);
     this.socketState.emitToRoom(dto.room, 'newMessage', message);
+  }
+
+  @SubscribeMessage('markDelivered')
+  @UsePipes(wsValidationPipe)
+  async handleMarkDelivered(
+    @MessageBody() dto: MarkDeliveredDto,
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ) {
+    const userId = client.data.user.id;
+    const { updates, deliveredAt } = await this.chatService.markDelivered(
+      userId,
+      dto.messageIds,
+    );
+
+    for (const { messageId, room } of updates) {
+      this.socketState.emitToRoom(room, 'messageDelivered', {
+        messageId,
+        userId,
+        deliveredAt,
+      });
+    }
+
+    return {
+      ok: true,
+      updatedMessageIds: updates.map((u) => u.messageId),
+      deliveredAt,
+    };
+  }
+
+  @SubscribeMessage('markRead')
+  @UsePipes(wsValidationPipe)
+  async handleMarkRead(
+    @MessageBody() dto: MarkReadDto,
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ) {
+    const userId = client.data.user.id;
+    const { messageIds, readAt } = await this.chatService.markRead(
+      userId,
+      dto.conversationId,
+      dto.readUpToMessageId,
+    );
+
+    this.socketState.emitToRoom(dto.conversationId, 'messagesSeen', {
+      conversationId: dto.conversationId,
+      userId,
+      messageIds,
+      readAt,
+      readUpToMessageId: dto.readUpToMessageId,
+    });
+
+    return { ok: true, messageIds, readAt };
   }
 }

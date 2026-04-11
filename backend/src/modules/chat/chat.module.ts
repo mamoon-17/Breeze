@@ -9,6 +9,7 @@ import { ConversationModule } from '../conversation/conversation.module';
 import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './chat-message.entity';
+import { MessageReceipt } from './message-receipt.entity';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 
 @Module({
@@ -17,7 +18,7 @@ import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
     AuthModule,
     UserModule,
     forwardRef(() => ConversationModule),
-    TypeOrmModule.forFeature([ChatMessage]),
+    TypeOrmModule.forFeature([ChatMessage, MessageReceipt]),
     JwtModule.registerAsync({
       imports: [AppConfigModule],
       inject: [AppConfigService],
