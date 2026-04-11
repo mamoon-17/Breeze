@@ -6,6 +6,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import {
   DataSource,
+  In,
+  IsNull,
   LessThan,
   LessThanOrEqual,
   Not,
@@ -67,45 +69,48 @@ export class ChatService {
     });
   }
 
-  /**
-   * Recipient confirms their client received the message payload (delivered).
-   */
-  async markDelivered(
+  async deliverPendingMessages(
     userId: string,
-    messageIds: string[],
-  ): Promise<{
-    updates: { messageId: string; room: string }[];
-    deliveredAt: Date;
-  }> {
+  ): Promise<{ messageId: string; room: string; deliveredAt: Date }[]> {
+    const pending = await this.receiptRepository.find({
+      where: { userId, deliveredAt: IsNull() },
+      relations: ['message'],
+    });
+    if (pending.length === 0) return [];
+
     const now = new Date();
-    const updates: { messageId: string; room: string }[] = [];
+    await this.receiptRepository.update(
+      { id: In(pending.map((r) => r.id)) },
+      { deliveredAt: now },
+    );
 
-    for (const messageId of messageIds) {
-      const msg = await this.chatMessageRepository.findOne({
-        where: { id: messageId },
-        select: ['id', 'room', 'senderId'],
-      });
-      if (!msg) continue;
+    return pending.map((r) => ({
+      messageId: r.messageId,
+      room: r.message.room,
+      deliveredAt: now,
+    }));
+  }
 
-      const isMember = await this.conversationService.isMember(userId, msg.room);
-      if (!isMember) continue;
-      if (msg.senderId === userId) continue;
-
-      const result = await this.receiptRepository
-        .createQueryBuilder()
-        .update(MessageReceipt)
-        .set({ deliveredAt: now })
-        .where('messageId = :messageId', { messageId })
-        .andWhere('userId = :userId', { userId })
-        .andWhere('deliveredAt IS NULL')
-        .execute();
-
-      if (result.affected && result.affected > 0) {
-        updates.push({ messageId, room: msg.room });
-      }
+  /** Caller must ensure recipientId is authorized (e.g. server-managed delivery). */
+  async markDelivered(
+    recipientId: string,
+    messageIds: string[],
+  ): Promise<{ deliveredAt: Date }> {
+    const now = new Date();
+    if (messageIds.length === 0) {
+      return { deliveredAt: now };
     }
 
-    return { updates, deliveredAt: now };
+    await this.receiptRepository
+      .createQueryBuilder()
+      .update(MessageReceipt)
+      .set({ deliveredAt: now })
+      .where('userId = :recipientId', { recipientId })
+      .andWhere('messageId IN (:...messageIds)', { messageIds })
+      .andWhere('deliveredAt IS NULL')
+      .execute();
+
+    return { deliveredAt: now };
   }
 
   /**

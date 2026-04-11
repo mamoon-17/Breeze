@@ -5,6 +5,31 @@ import { Server } from 'socket.io';
 export class SocketStateService {
   private server: Server;
 
+  private userSockets: Map<string, Set<string>> = new Map();
+
+  addSocket(userId: string, socketId: string): void {
+    let set = this.userSockets.get(userId);
+    if (!set) {
+      set = new Set<string>();
+      this.userSockets.set(userId, set);
+    }
+    set.add(socketId);
+  }
+
+  removeSocket(userId: string, socketId: string): void {
+    const set = this.userSockets.get(userId);
+    if (!set) return;
+    set.delete(socketId);
+    if (set.size === 0) {
+      this.userSockets.delete(userId);
+    }
+  }
+
+  isUserOnline(userId: string): boolean {
+    const set = this.userSockets.get(userId);
+    return !!set && set.size > 0;
+  }
+
   setServer(server: Server) {
     this.server = server;
   }

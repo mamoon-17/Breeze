@@ -18,7 +18,6 @@ import { ConversationService } from '../conversation/conversation.service';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 import type { AuthenticatedSocket } from '../../common/types/authenticated-socket';
 import { SendMessageDto } from './dto/send-message.dto';
-import { MarkDeliveredDto } from './dto/mark-delivered.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
 
 const wsValidationPipe = new ValidationPipe({
@@ -58,15 +57,29 @@ export class ChatGateway
     );
   }
 
-  handleConnection(client: AuthenticatedSocket) {
-    this.logger.log(
-      `Client connected: ${client.id} (user: ${client.data.user.id})`,
-    );
+  async handleConnection(client: AuthenticatedSocket) {
+    const userId = client.data.user.id;
+    this.socketState.addSocket(userId, client.id);
+
+    const results = await this.chatService.deliverPendingMessages(userId);
+    for (const { messageId, room, deliveredAt } of results) {
+      this.socketState.emitToRoom(room, 'messageDelivered', {
+        messageId,
+        userId,
+        deliveredAt,
+      });
+    }
+
+    this.logger.log(`Client connected: ${client.id} (user: ${userId})`);
   }
 
   handleDisconnect(client: AuthenticatedSocket) {
+    const userId = client.data.user?.id;
+    if (userId) {
+      this.socketState.removeSocket(userId, client.id);
+    }
     this.logger.log(
-      `Client disconnected: ${client.id} (user: ${client.data.user?.id ?? 'unknown'})`,
+      `Client disconnected: ${client.id} (user: ${userId ?? 'unknown'})`,
     );
   }
 
@@ -105,33 +118,21 @@ export class ChatGateway
 
     const message = await this.chatService.saveMessage(dto, client.data.user.id);
     this.socketState.emitToRoom(dto.room, 'newMessage', message);
-  }
 
-  @SubscribeMessage('markDelivered')
-  @UsePipes(wsValidationPipe)
-  async handleMarkDelivered(
-    @MessageBody() dto: MarkDeliveredDto,
-    @ConnectedSocket() client: AuthenticatedSocket,
-  ) {
-    const userId = client.data.user.id;
-    const { updates, deliveredAt } = await this.chatService.markDelivered(
-      userId,
-      dto.messageIds,
-    );
-
-    for (const { messageId, room } of updates) {
-      this.socketState.emitToRoom(room, 'messageDelivered', {
-        messageId,
-        userId,
-        deliveredAt,
-      });
+    const memberIds = await this.conversationService.getMemberUserIds(dto.room);
+    const recipients = memberIds.filter((id) => id !== client.data.user.id);
+    for (const recipientId of recipients) {
+      if (this.socketState.isUserOnline(recipientId)) {
+        const { deliveredAt } = await this.chatService.markDelivered(recipientId, [
+          message.id,
+        ]);
+        this.socketState.emitToRoom(dto.room, 'messageDelivered', {
+          messageId: message.id,
+          userId: recipientId,
+          deliveredAt,
+        });
+      }
     }
-
-    return {
-      ok: true,
-      updatedMessageIds: updates.map((u) => u.messageId),
-      deliveredAt,
-    };
   }
 
   @SubscribeMessage('markRead')
