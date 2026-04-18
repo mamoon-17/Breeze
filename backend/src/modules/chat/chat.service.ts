@@ -72,10 +72,13 @@ export class ChatService {
   async deliverPendingMessages(
     userId: string,
   ): Promise<{ messageId: string; room: string; deliveredAt: Date }[]> {
-    const pending = await this.receiptRepository.find({
-      where: { userId, deliveredAt: IsNull() },
-      relations: ['message'],
-    });
+    const pending = await this.receiptRepository
+      .createQueryBuilder('r')
+      .innerJoinAndSelect('r.message', 'm')
+      .where('r.userId = :userId', { userId })
+      .andWhere('r.deliveredAt IS NULL')
+      .andWhere('m.deletedAt IS NULL')
+      .getMany();
     if (pending.length === 0) return [];
 
     const now = new Date();
@@ -188,6 +191,7 @@ export class ChatService {
     return this.chatMessageRepository.find({
       where: {
         room,
+        deletedAt: IsNull(),
         ...(beforeDate ? { createdAt: LessThan(beforeDate) } : {}),
       },
       order: { createdAt: 'DESC' },
@@ -196,7 +200,49 @@ export class ChatService {
     });
   }
 
+  async deleteMessage(
+    requesterId: string,
+    room: string,
+    messageId: string,
+  ): Promise<{ messageId: string; room: string; deletedAt: Date }> {
+    await this.conversationService.requireMember(requesterId, room);
+
+    const msg = await this.chatMessageRepository.findOne({
+      where: { id: messageId, room },
+      withDeleted: true,
+    });
+    if (!msg || msg.deletedAt) {
+      throw new NotFoundException('Message not found');
+    }
+    if (msg.senderId !== requesterId) {
+      throw new ForbiddenException('Only the sender can delete this message');
+    }
+
+    const deleted = await this.chatMessageRepository.softRemove(msg);
+    return { messageId: deleted.id, room: deleted.room, deletedAt: deleted.deletedAt! };
+  }
+
   async broadcastAnnouncement(text: string): Promise<void> {
     this.socketState.emitToAll('announcement', { text, timestamp: new Date() });
+  }
+
+  async getUnreadCounts(
+    userId: string,
+  ): Promise<{ conversationId: string; unreadCount: number }[]> {
+    const rows = await this.receiptRepository
+      .createQueryBuilder('r')
+      .innerJoin('r.message', 'm')
+      .select('m.room', 'conversationId')
+      .addSelect('COUNT(*)', 'unreadCount')
+      .where('r.userId = :userId', { userId })
+      .andWhere('r.readAt IS NULL')
+      .andWhere('m.deletedAt IS NULL')
+      .groupBy('m.room')
+      .getRawMany<{ conversationId: string; unreadCount: string }>();
+
+    return rows.map((r) => ({
+      conversationId: r.conversationId,
+      unreadCount: Number(r.unreadCount) || 0,
+    }));
   }
 }

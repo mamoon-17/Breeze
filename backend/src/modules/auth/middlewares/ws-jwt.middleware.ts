@@ -57,6 +57,8 @@ export class WsJwtMiddleware {
         }
 
         socket.data.user = userResult.value;
+        socket.data.accessTokenJti = payload.jti;
+        socket.data.accessTokenExp = (payload as unknown as { exp?: number }).exp;
         next();
       } catch (err) {
         this.logger.error(`WS auth error: ${err instanceof Error ? err.message : String(err)}`);

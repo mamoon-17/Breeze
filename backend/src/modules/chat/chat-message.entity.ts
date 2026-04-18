@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   OneToMany,
@@ -30,6 +31,9 @@ export class ChatMessage {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  @DeleteDateColumn({ type: 'timestamptz', nullable: true })
+  deletedAt?: Date | null;
 
   @OneToMany(() => MessageReceipt, (r) => r.message)
   receipts: MessageReceipt[];

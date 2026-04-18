@@ -179,6 +179,22 @@ export class AppConfigService {
     return ['http://localhost:3000', 'http://localhost:3001'];
   }
 
+  get vapidSubject(): string {
+    return this.configService.get<string>('VAPID_SUBJECT') ?? 'mailto:admin@example.com';
+  }
+
+  get vapidPublicKey(): string {
+    const value = this.getRequired('VAPID_PUBLIC_KEY');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
+  get vapidPrivateKey(): string {
+    const value = this.getRequired('VAPID_PRIVATE_KEY');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
   get wsPort(): number {
     return (
       Number(this.configService.get<string>('WS_PORT')) ||

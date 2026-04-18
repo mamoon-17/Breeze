@@ -61,6 +61,12 @@ export class ConversationController {
     return { conversations };
   }
 
+  @Get('unread-counts')
+  async getUnreadCounts(@User() user: UserEntity) {
+    const counts = await this.chatService.getUnreadCounts(user.id);
+    return { counts };
+  }
+
   @Patch(':id')
   async updateConversation(
     @Param() params: ConversationIdParamDto,
@@ -108,6 +114,12 @@ export class ConversationController {
       params.userId,
     );
     return { message: 'Member removed successfully' };
+  }
+
+  @Post(':id/leave')
+  async leaveGroup(@Param() params: ConversationIdParamDto, @User() user: UserEntity) {
+    await this.conversationService.leaveGroup(user.id, params.id);
+    return { message: 'Left group successfully' };
   }
 
   // ─── History ───────────────────────────────────────────────────────────────

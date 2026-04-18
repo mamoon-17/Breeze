@@ -18,6 +18,7 @@ import { RefreshToken } from './decorators/refresh-token.decorator';
 import { ClientInfo } from './decorators/client-info.decorator';
 import type { ClientInfo as ClientInfoType } from './decorators/client-info.decorator';
 import { User as UserEntity } from '../user/user.entity';
+import { SocketStateService } from '../socket/socket-state.service';
 
 @Controller('auth')
 export class AuthController {
@@ -25,6 +26,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly appConfigService: AppConfigService,
     private readonly jwtService: JwtService,
+    private readonly socketState: SocketStateService,
   ) {}
 
   @Get('google')
@@ -151,6 +153,9 @@ export class AuthController {
       throw toHttpException(result.error);
     }
 
+    // Force-disconnect active websocket sessions for this user.
+    this.socketState.disconnectUser(payload.uid, 'logout');
+
     this.clearAuthCookies(res);
     return {
       message: 'Logged out successfully',
@@ -180,6 +185,9 @@ export class AuthController {
     if (result.isErr()) {
       throw toHttpException(result.error);
     }
+
+    // Force-disconnect active websocket sessions for this user.
+    this.socketState.disconnectUser(user.id, 'logout_all');
 
     this.clearAuthCookies(res);
     return {

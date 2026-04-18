@@ -11,12 +11,14 @@ import { ChatService } from './chat.service';
 import { ChatMessage } from './chat-message.entity';
 import { MessageReceipt } from './message-receipt.entity';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     AppConfigModule,
     AuthModule,
     UserModule,
+    NotificationsModule,
     forwardRef(() => ConversationModule),
     TypeOrmModule.forFeature([ChatMessage, MessageReceipt]),
     JwtModule.registerAsync({

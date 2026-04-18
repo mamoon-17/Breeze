@@ -132,9 +132,22 @@ export class ConversationService {
 
     await this.requireMember(requesterId, conversationId);
 
-    const alreadyMember = await this.isMember(newUserId, conversationId);
-    if (alreadyMember) {
+    const existing = await this.membershipRepository.findOne({
+      where: { userId: newUserId, conversationId },
+      withDeleted: true,
+    });
+
+    if (existing && !existing.leftAt) {
       throw new BadRequestException('User is already a member of this conversation');
+    }
+
+    if (existing && existing.leftAt) {
+      await this.membershipRepository.restore({ id: existing.id });
+      await this.membershipRepository.update(
+        { id: existing.id },
+        { lastReadAt: null },
+      );
+      return;
     }
 
     await this.membershipRepository.insert({
@@ -168,7 +181,23 @@ export class ConversationService {
       throw new NotFoundException('User is not a member of this conversation');
     }
 
-    await this.membershipRepository.remove(membership);
+    await this.membershipRepository.softRemove(membership);
+  }
+
+  async leaveGroup(userId: string, conversationId: string): Promise<void> {
+    const conversation = await this.findOneOrFail(conversationId);
+    if (conversation.type !== 'group') {
+      throw new BadRequestException('Only group conversations can be left');
+    }
+
+    const membership = await this.membershipRepository.findOne({
+      where: { userId, conversationId },
+    });
+    if (!membership) {
+      throw new NotFoundException('User is not a member of this conversation');
+    }
+
+    await this.membershipRepository.softRemove(membership);
   }
 
   async getMembers(

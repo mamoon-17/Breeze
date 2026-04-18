@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   ManyToOne,
@@ -28,6 +29,9 @@ export class Membership {
 
   @CreateDateColumn()
   joinedAt: Date;
+
+  @DeleteDateColumn({ type: 'timestamptz', nullable: true })
+  leftAt?: Date | null;
 
   @ManyToOne(() => Conversation, (conversation) => conversation.memberships, {
     onDelete: 'CASCADE',

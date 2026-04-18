@@ -34,6 +34,25 @@ export class SocketStateService {
     this.server = server;
   }
 
+  /**
+   * Disconnect all active sockets for a given user.
+   * Safe to call even if the user is offline.
+   */
+  disconnectUser(userId: string, reason = 'forced_disconnect'): void {
+    const set = this.userSockets.get(userId);
+    if (!set || set.size === 0) return;
+
+    for (const socketId of set) {
+      const socket = this.server?.sockets?.sockets?.get(socketId);
+      if (socket) {
+        socket.emit('disconnectReason', { reason });
+        socket.disconnect(true);
+      }
+    }
+
+    this.userSockets.delete(userId);
+  }
+
   emitToRoom(room: string, event: string, data: unknown) {
     this.server.to(room).emit(event, data);
   }
