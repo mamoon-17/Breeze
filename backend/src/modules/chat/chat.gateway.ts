@@ -302,6 +302,41 @@ export class ChatGateway
     return { ok: true, messageIds, readAt };
   }
 
+  @SubscribeMessage('typing')
+  async handleTyping(
+    @MessageBody() conversationId: string,
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ) {
+    const isMember = await this.conversationService.isMember(
+      client.data.user.id,
+      conversationId,
+    );
+    if (!isMember) return;
+
+    // Broadcast to everyone in the room except the sender.
+    client.to(conversationId).emit('userTyping', {
+      conversationId,
+      userId: client.data.user.id,
+    });
+  }
+
+  @SubscribeMessage('stopTyping')
+  async handleStopTyping(
+    @MessageBody() conversationId: string,
+    @ConnectedSocket() client: AuthenticatedSocket,
+  ) {
+    const isMember = await this.conversationService.isMember(
+      client.data.user.id,
+      conversationId,
+    );
+    if (!isMember) return;
+
+    client.to(conversationId).emit('userStopTyping', {
+      conversationId,
+      userId: client.data.user.id,
+    });
+  }
+
   @SubscribeMessage('deleteMessage')
   @UsePipes(wsValidationPipe)
   async handleDeleteMessage(

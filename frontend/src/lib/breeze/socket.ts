@@ -1,0 +1,197 @@
+// Socket.io client wired with the current bearer token.
+//
+// Mid-session re-auth flow:
+//   · We proactively refresh the access token ~60s before it expires.
+//   · If the backend kicks us with `authExpired`, we refresh and reconnect.
+//   · If a handshake fails with an auth-shaped `connect_error`, we also
+//     refresh + retry once before giving up.
+
+import { io, type Socket } from "socket.io-client";
+import {
+  API_BASE,
+  getAccessToken,
+  onTokensChange,
+  refreshTokens,
+} from "./api";
+import type {
+  AuthTokens,
+  ChatMessage,
+  WsMessageDelivered,
+  WsMessagesSeen,
+  WsMessageDeleted,
+  WsUserOnline,
+  WsUserOffline,
+  WsTyping,
+  WsAuthExpired,
+} from "./types";
+
+let socket: Socket | null = null;
+let tokensUnsubscribe: (() => void) | null = null;
+let proactiveRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectingForAuth = false;
+
+export interface BreezeServerEvents {
+  newMessage: (msg: ChatMessage) => void;
+  messageDelivered: (evt: WsMessageDelivered) => void;
+  messagesSeen: (evt: WsMessagesSeen) => void;
+  messageDeleted: (evt: WsMessageDeleted) => void;
+  joinedRoom: (room: string) => void;
+  userOnline: (evt: WsUserOnline) => void;
+  userOffline: (evt: WsUserOffline) => void;
+  userTyping: (evt: WsTyping) => void;
+  userStopTyping: (evt: WsTyping) => void;
+  authExpired: (evt: WsAuthExpired) => void;
+}
+
+function clearProactiveRefresh() {
+  if (proactiveRefreshTimer) {
+    clearTimeout(proactiveRefreshTimer);
+    proactiveRefreshTimer = null;
+  }
+}
+
+function scheduleProactiveRefresh(tokens: AuthTokens | null) {
+  clearProactiveRefresh();
+  if (!tokens?.accessToken || !tokens.accessTokenExpiresIn) return;
+
+  // Refresh 60s before expiry (min 15s), so reconnects never race against expiry.
+  const ms = Math.max(
+    (tokens.accessTokenExpiresIn - 60) * 1000,
+    15_000,
+  );
+
+  proactiveRefreshTimer = setTimeout(() => {
+    void refreshTokens().catch(() => {
+      // Errors handled by api.ts → clears tokens → auth context signs out.
+    });
+  }, ms);
+}
+
+/** Try to recover the socket after an auth failure. Returns true on success. */
+async function reauthAndReconnect(): Promise<boolean> {
+  if (!socket) return false;
+  if (reconnectingForAuth) return true;
+  reconnectingForAuth = true;
+  try {
+    const tokens = await refreshTokens();
+    if (!tokens?.accessToken || !socket) return false;
+    socket.auth = { token: tokens.accessToken };
+    if (socket.connected) socket.disconnect();
+    socket.connect();
+    return true;
+  } finally {
+    reconnectingForAuth = false;
+  }
+}
+
+function isAuthError(err: unknown): boolean {
+  if (!err) return false;
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err && "message" in err
+        ? String((err as { message: unknown }).message)
+        : String(err);
+  return /unauthor|invalid.*token|expired.*token|revok/i.test(msg);
+}
+
+export function getSocket(): Socket {
+  if (socket) return socket;
+  const token = getAccessToken();
+  socket = io(API_BASE, {
+    transports: ["websocket"],
+    auth: token ? { token } : {},
+    autoConnect: true,
+    withCredentials: true,
+  });
+
+  // Re-auth when tokens rotate (proactive refresh or api.ts auto-retry).
+  tokensUnsubscribe?.();
+  tokensUnsubscribe = onTokensChange((t) => {
+    scheduleProactiveRefresh(t);
+    if (!socket) return;
+    socket.auth = t?.accessToken ? { token: t.accessToken } : {};
+    // Only bounce the connection if we already had one going — a fresh
+    // connect would otherwise not pick up the new token.
+    if (socket.connected) {
+      socket.disconnect();
+      socket.connect();
+    }
+  });
+
+  // Reactive: backend tells us the session is no longer valid.
+  socket.on("authExpired", async () => {
+    const recovered = await reauthAndReconnect();
+    if (!recovered) {
+      // Let the app layer decide what to do (redirect to sign-in, etc.).
+      // We signal by clearing tokens via api.ts, which fires tokensChange(null).
+      // That happens inside refreshTokens() on failure already.
+    }
+  });
+
+  // Reactive: access token rejected at handshake — try a one-shot refresh + reconnect.
+  socket.on("connect_error", async (err: Error) => {
+    if (!isAuthError(err)) return;
+    await reauthAndReconnect();
+  });
+
+  // First-time scheduling — we don't have the expiry in memory for the
+  // current access token (it wasn't surfaced to `onTokensChange`), so we
+  // rely on subsequent refreshes to start the cadence. Nothing else to do here.
+
+  return socket;
+}
+
+export function disconnectSocket() {
+  clearProactiveRefresh();
+  if (tokensUnsubscribe) {
+    tokensUnsubscribe();
+    tokensUnsubscribe = null;
+  }
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+}
+
+export function joinRoom(conversationId: string) {
+  getSocket().emit("joinRoom", conversationId);
+}
+
+export function sendMessage(room: string, message: string) {
+  getSocket().emit("sendMessage", { room, message });
+}
+
+export function deleteMessage(room: string, messageId: string) {
+  getSocket().emit("deleteMessage", { room, messageId });
+}
+
+export function markRead(conversationId: string, readUpToMessageId: string) {
+  getSocket().emit("markRead", { conversationId, readUpToMessageId });
+}
+
+export function emitTyping(conversationId: string) {
+  getSocket().emit("typing", conversationId);
+}
+
+export function emitStopTyping(conversationId: string) {
+  getSocket().emit("stopTyping", conversationId);
+}
+
+/**
+ * Emits a `getPresence` event and resolves with the list of online user IDs
+ * for the given conversation. Returns [] on timeout or error.
+ */
+export function getPresence(conversationId: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve([]), 5000);
+    getSocket().emit(
+      "getPresence",
+      conversationId,
+      (response: { conversationId: string; onlineUserIds: string[] }) => {
+        clearTimeout(timer);
+        resolve(response?.onlineUserIds ?? []);
+      },
+    );
+  });
+}
