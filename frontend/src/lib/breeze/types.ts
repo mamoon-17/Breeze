@@ -5,8 +5,25 @@ export type AuthProvider = "google" | "apple" | "email";
 export interface BreezeUser {
   id: string;
   email: string;
+  /**
+   * Effective display name — respects `customDisplayName` when the user has
+   * set one, otherwise falls back to the Google-supplied name. Always
+   * non-null in practice (backend guarantees a string) but typed as
+   * nullable to match legacy callers.
+   */
   displayName: string | null;
+  /**
+   * Relative path (starts with `/`) to our avatar proxy endpoint, or `null`
+   * when the user has no avatar bytes on disk. Clients compose it as
+   * `${API_BASE}${avatarUrl}`.
+   */
   avatarUrl?: string | null;
+  /** Raw Google-supplied name, useful for showing defaults in the settings UI. */
+  googleDisplayName?: string | null;
+  /** When true the avatar served is the cached Google picture, else a custom upload. */
+  useGoogleAvatar?: boolean;
+  /** Whether the user has an uploaded custom avatar file, regardless of current toggle. */
+  hasCustomAvatar?: boolean;
   provider?: AuthProvider;
   providerId?: string;
   createdAt?: string;
@@ -59,6 +76,11 @@ export interface ChatMessage {
   createdAt: string;
   deletedAt?: string | null;
   receipts?: MessageReceipt[];
+  /**
+   * Client-only field for instant rendering while we wait for the server
+   * echo. Never persisted and never sent over the wire.
+   */
+  optimistic?: boolean;
 }
 
 export interface SessionFamily {

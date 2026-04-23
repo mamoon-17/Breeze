@@ -19,6 +19,10 @@ import {
   HydratedInvitation,
 } from './conversation-invitation.service';
 import { SocketStateService } from '../socket/socket-state.service';
+import {
+  effectiveAvatarUrl,
+  effectiveDisplayName,
+} from '../user/user-projection';
 
 /**
  * Conversation payload returned to the sidebar. DMs carry a lightweight `peer`
@@ -303,8 +307,8 @@ export class ConversationService {
           ? {
               id: u.id,
               email: u.email,
-              displayName: u.displayName,
-              avatarUrl: u.picture ?? null,
+              displayName: effectiveDisplayName(u),
+              avatarUrl: effectiveAvatarUrl(u),
             }
           : null,
       };
@@ -425,8 +429,8 @@ export class ConversationService {
           ? {
               id: peer.id,
               email: peer.email,
-              displayName: peer.displayName,
-              avatarUrl: peer.picture ?? null,
+              displayName: effectiveDisplayName(peer),
+              avatarUrl: effectiveAvatarUrl(peer),
             }
           : null,
         lastMessage: last

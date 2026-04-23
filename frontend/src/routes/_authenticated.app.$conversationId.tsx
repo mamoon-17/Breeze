@@ -115,9 +115,31 @@ function ConversationView() {
 
     const onNewMessage = (msg: ChatMessage) => {
       if (msg.room !== conversationId) return;
-      setMessages((prev) =>
-        prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
-      );
+      setMessages((prev) => {
+        // Server echo arrived. Three cases:
+        //   1. We've already folded this message in → no-op.
+        //   2. We previously rendered an optimistic placeholder with the same
+        //      sender + text → replace it in place (prevents duplicates even
+        //      when `user` was stale in this closure's scope).
+        //   3. Otherwise it's someone else's message or a message we never
+        //      sent optimistically → append.
+        if (prev.some((m) => m.id === msg.id)) return prev;
+
+        const idx = prev.findIndex(
+          (m) =>
+            m.optimistic === true &&
+            m.senderId === msg.senderId &&
+            m.room === msg.room &&
+            m.message === msg.message,
+        );
+        if (idx !== -1) {
+          const next = [...prev];
+          next[idx] = msg;
+          return next;
+        }
+
+        return [...prev, msg];
+      });
     };
     const onDelivered = (evt: WsMessageDelivered) => {
       setMessages((prev) =>
@@ -288,6 +310,22 @@ function ConversationView() {
   const handleSend = (text: string) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (!user?.id) return;
+
+    // Optimistic render so the UI feels instant; we reconcile this entry once
+    // the server broadcasts the canonical message.
+    const nowIso = new Date().toISOString();
+    const optimistic: ChatMessage = {
+      id: `local:${globalThis.crypto?.randomUUID?.() ?? String(Date.now())}`,
+      room: conversationId,
+      senderId: user.id,
+      message: trimmed,
+      sentAt: nowIso,
+      createdAt: nowIso,
+      receipts: [],
+      optimistic: true,
+    };
+    setMessages((prev) => [...prev, optimistic]);
     wsSendMessage(conversationId, trimmed);
   };
 

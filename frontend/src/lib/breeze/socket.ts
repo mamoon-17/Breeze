@@ -60,13 +60,21 @@ function clearProactiveRefresh() {
 
 function scheduleProactiveRefresh(tokens: AuthTokens | null) {
   clearProactiveRefresh();
-  if (!tokens?.accessToken || !tokens.accessTokenExpiresIn) return;
+  if (!tokens?.accessToken) return;
 
-  // Refresh 60s before expiry (min 15s), so reconnects never race against expiry.
-  const ms = Math.max(
-    (tokens.accessTokenExpiresIn - 60) * 1000,
-    15_000,
-  );
+  // Historical bug: the backend used to return `accessTokenExpiresIn` as a
+  // string like "600s". `Number("600s") = NaN`, which combined with
+  // `setTimeout(fn, NaN)` (browsers treat NaN as 0) produced an immediate
+  // refresh storm that tripped rapid-refresh anomaly detection and killed
+  // sessions after a few minutes. Defensive coercion below — plus the
+  // `Number.isFinite` guard and minimum schedule — keeps us safe even if
+  // a stale server or bad callback URL tries to feed us garbage.
+  const ttlSeconds = Number(tokens.accessTokenExpiresIn);
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) return;
+
+  // Refresh 60s before expiry, minimum 15s out so reconnects never race
+  // against expiry but we never schedule an immediate refresh either.
+  const ms = Math.max((ttlSeconds - 60) * 1000, 15_000);
 
   proactiveRefreshTimer = setTimeout(() => {
     void refreshTokens().catch(() => {

@@ -790,8 +790,8 @@ export class AuthService {
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
-      accessTokenExpiresIn: `${ttl}s`,
-      refreshTokenExpiresIn: `${this.appConfigService.jwtRefreshExpiresInSeconds}s`,
+      accessTokenExpiresIn: ttl,
+      refreshTokenExpiresIn: this.appConfigService.jwtRefreshExpiresInSeconds,
     };
   }
 

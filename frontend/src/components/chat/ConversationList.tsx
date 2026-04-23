@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import type { Conversation } from "@/lib/breeze/types";
+import { resolveAvatarUrl } from "@/lib/breeze/api";
 
 interface Props {
   conversations: Conversation[];
@@ -71,7 +73,9 @@ export function ConversationList({
             >
               <div className="relative shrink-0">
                 <Avatar
-                  src={c.type === "group" ? c.avatarUrl : c.peer?.avatarUrl}
+                  src={resolveAvatarUrl(
+                    c.type === "group" ? c.avatarUrl : c.peer?.avatarUrl,
+                  )}
                   initial={initial}
                   bgClass={getAvatarColor(title)}
                 />
@@ -127,12 +131,20 @@ function Avatar({
   initial: string;
   bgClass: string;
 }) {
-  if (src) {
+  const [broken, setBroken] = useState(false);
+
+  // If the src changes (e.g. refreshed profile photo), retry loading it.
+  useEffect(() => {
+    setBroken(false);
+  }, [src]);
+
+  if (src && !broken) {
     return (
       <img
         src={src}
         alt=""
         className="size-10 shrink-0 rounded-full object-cover"
+        onError={() => setBroken(true)}
       />
     );
   }

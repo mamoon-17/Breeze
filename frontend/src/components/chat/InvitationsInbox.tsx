@@ -2,7 +2,7 @@
 // with accept / reject actions. Updates live via socket events from the app shell.
 
 import { useEffect, useState } from "react";
-import { Invitations } from "@/lib/breeze/api";
+import { Invitations, resolveAvatarUrl } from "@/lib/breeze/api";
 import type { ConversationInvitation } from "@/lib/breeze/types";
 import { toast } from "sonner";
 
@@ -16,6 +16,7 @@ export function InvitationsInbox({ open, onClose, onAccepted }: Props) {
   const [items, setItems] = useState<ConversationInvitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [broken, setBroken] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!open) return;
@@ -112,11 +113,14 @@ export function InvitationsInbox({ open, onClose, onAccepted }: Props) {
                   key={inv.id}
                   className="flex items-start gap-3 rounded-xl border border-linen-200 bg-linen-50 p-3"
                 >
-                  {inv.inviter.avatarUrl ? (
+                  {resolveAvatarUrl(inv.inviter.avatarUrl) && !broken[inv.id] ? (
                     <img
-                      src={inv.inviter.avatarUrl}
+                      src={resolveAvatarUrl(inv.inviter.avatarUrl) ?? undefined}
                       alt=""
                       className="size-10 shrink-0 rounded-full object-cover"
+                      onError={() =>
+                        setBroken((prev) => ({ ...prev, [inv.id]: true }))
+                      }
                     />
                   ) : (
                     <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-breeze text-sm font-semibold text-white">

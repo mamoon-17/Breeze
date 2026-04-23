@@ -18,6 +18,10 @@ import { ClientInfo } from './decorators/client-info.decorator';
 import type { ClientInfo as ClientInfoType } from './decorators/client-info.decorator';
 import { User as UserEntity } from '../user/user.entity';
 import { SocketStateService } from '../socket/socket-state.service';
+import {
+  effectiveAvatarUrl,
+  effectiveDisplayName,
+} from '../user/user-projection';
 
 @Controller('auth')
 export class AuthController {
@@ -82,8 +86,25 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   getMe(@User() user: UserEntity) {
+    // Return the same shape as `/user/:id` so the frontend has one mental
+    // model of "user". In particular: effective displayName, avatarUrl, and
+    // `useGoogleAvatar`/`hasCustomAvatar` for the settings page.
     return {
-      user,
+      user: {
+        id: user.id,
+        email: user.email,
+        provider: user.provider,
+        providerId: user.providerId,
+        displayName: effectiveDisplayName(user),
+        googleDisplayName: user.displayName,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        avatarUrl: effectiveAvatarUrl(user),
+        useGoogleAvatar: user.useGoogleAvatar,
+        hasCustomAvatar: Boolean(user.customAvatarPath),
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
     };
   }
 

@@ -12,6 +12,10 @@ import { Conversation } from './conversation.entity';
 import { Membership } from './membership.entity';
 import { User } from '../user/user.entity';
 import { SocketStateService } from '../socket/socket-state.service';
+import {
+  effectiveAvatarUrl,
+  effectiveDisplayName,
+} from '../user/user-projection';
 
 export interface HydratedInvitation {
   id: string;
@@ -364,14 +368,14 @@ export class ConversationInvitationService {
       inviter: {
         id: inviter.id,
         email: inviter.email,
-        displayName: inviter.displayName,
-        avatarUrl: inviter.picture ?? null,
+        displayName: effectiveDisplayName(inviter),
+        avatarUrl: effectiveAvatarUrl(inviter),
       },
       invitee: {
         id: invitee.id,
         email: invitee.email,
-        displayName: invitee.displayName,
-        avatarUrl: invitee.picture ?? null,
+        displayName: effectiveDisplayName(invitee),
+        avatarUrl: effectiveAvatarUrl(invitee),
       },
     };
   }

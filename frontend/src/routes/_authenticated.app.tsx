@@ -28,6 +28,46 @@ import {
 } from "@/lib/breeze/push";
 import { toast } from "sonner";
 
+let notifAudioCtx: AudioContext | null = null;
+function playNotificationSound() {
+  try {
+    const Ctx =
+      window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    if (!notifAudioCtx) notifAudioCtx = new Ctx();
+    const ctx = notifAudioCtx;
+    if (ctx.state === "suspended") {
+      // Best-effort; browsers may still block until a user gesture occurs.
+      void ctx.resume().catch(() => {});
+    }
+
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.value = 880; // A5
+    g.gain.value = 0.0001;
+    o.connect(g);
+    g.connect(ctx.destination);
+
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.06, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.start(t);
+    o.stop(t + 0.13);
+    o.onended = () => {
+      try {
+        o.disconnect();
+        g.disconnect();
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    // ignore
+  }
+}
+
 export const Route = createFileRoute("/_authenticated/app")({
   component: AppShell,
 });
@@ -185,6 +225,7 @@ function AppShell() {
       );
 
       if (!isActive) {
+        playNotificationSound();
         // Resolve sender name from existing conversation data.
         const convo = conversationsRef.current.find((c) => c.id === msg.room);
         const senderName =
@@ -384,6 +425,27 @@ function AppShell() {
               </button>
               {settingsOpen && (
                 <div className="absolute right-0 top-full z-50 mt-1 w-56 rounded-xl border border-linen-200 bg-card p-1 shadow-lg">
+                  <button
+                    onClick={() => {
+                      setSettingsOpen(false);
+                      navigate({ to: "/settings" });
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-foreground transition hover:bg-linen-100"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="size-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="8" r="4" />
+                      <path d="M4 21v-1a7 7 0 0 1 14 0v1" />
+                    </svg>
+                    Profile
+                  </button>
                   <button
                     onClick={() => {
                       setSettingsOpen(false);

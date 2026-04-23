@@ -200,6 +200,46 @@ export const Users = {
   },
 };
 
+export const Profile = {
+  /**
+   * Update the display-name override and/or the "use Google avatar" toggle.
+   * Send `customDisplayName: ""` or `null` to clear the override and fall
+   * back to the Google-supplied name.
+   */
+  update: (patch: {
+    customDisplayName?: string | null;
+    useGoogleAvatar?: boolean;
+  }) =>
+    api<{ user: BreezeUser }>("/user/me/profile", {
+      method: "PATCH",
+      body: patch,
+    }),
+  uploadAvatar: async (file: File): Promise<{ user: BreezeUser }> => {
+    const form = new FormData();
+    form.append("avatar", file);
+    return api<{ user: BreezeUser }>("/user/me/avatar", {
+      method: "POST",
+      body: form,
+    });
+  },
+  deleteAvatar: () =>
+    api<{ user: BreezeUser }>("/user/me/avatar", { method: "DELETE" }),
+};
+
+/**
+ * Compose a full URL for a user's avatar endpoint. Returns `null` when the
+ * supplied user has no avatar at all (backend gave us `null`), letting the
+ * caller fall back to initials. Accepts either a full URL (passes through)
+ * or the relative `/user/:id/avatar?v=…` we get from our own API.
+ */
+export function resolveAvatarUrl(
+  relativeOrNull: string | null | undefined,
+): string | null {
+  if (!relativeOrNull) return null;
+  if (/^https?:\/\//i.test(relativeOrNull)) return relativeOrNull;
+  return `${API_BASE}${relativeOrNull}`;
+}
+
 export interface CreateGroupResponse {
   conversationId: string;
   name: string | null;

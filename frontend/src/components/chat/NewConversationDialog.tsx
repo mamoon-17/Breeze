@@ -1,7 +1,7 @@
 // Modal: start a DM by email, or create a group with invitations.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Conversations, Users } from "@/lib/breeze/api";
+import { Conversations, Users, resolveAvatarUrl } from "@/lib/breeze/api";
 import type { BreezeUser } from "@/lib/breeze/types";
 import { toast } from "sonner";
 
@@ -331,6 +331,11 @@ function DmLookupHint({
   email: string;
   lookup: DmLookup;
 }) {
+  const [avatarBroken, setAvatarBroken] = useState(false);
+  useEffect(() => {
+    setAvatarBroken(false);
+  }, [lookup.user?.avatarUrl]);
+
   const trimmed = email.trim();
   if (!trimmed) {
     return (
@@ -354,11 +359,12 @@ function DmLookupHint({
   if (lookup.status === "found" && lookup.user) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-linen-200 bg-linen-50 px-3 py-2 text-sm">
-        {lookup.user.avatarUrl ? (
+        {resolveAvatarUrl(lookup.user.avatarUrl) && !avatarBroken ? (
           <img
-            src={lookup.user.avatarUrl}
+            src={resolveAvatarUrl(lookup.user.avatarUrl) ?? undefined}
             alt=""
             className="size-7 rounded-full object-cover"
+            onError={() => setAvatarBroken(true)}
           />
         ) : (
           <div className="flex size-7 items-center justify-center rounded-full bg-breeze text-[11px] font-semibold text-white">
