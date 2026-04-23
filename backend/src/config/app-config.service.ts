@@ -7,6 +7,13 @@ import { AppError, Errors } from '../common/errors/app-error';
 export class AppConfigService {
   constructor(private readonly configService: ConfigService) {}
 
+  /** True when both Google OAuth env vars are non-empty (strategy + routes enabled). */
+  get googleOAuthConfigured(): boolean {
+    const id = this.configService.get<string>('GOOGLE_CLIENT_ID')?.trim();
+    const secret = this.configService.get<string>('GOOGLE_CLIENT_SECRET')?.trim();
+    return Boolean(id && secret);
+  }
+
   get googleClientId(): string {
     const value = this.getRequired('GOOGLE_CLIENT_ID');
     if (value.isErr()) throw new Error(value.error.message);
@@ -176,7 +183,41 @@ export class AppConfigService {
     if (origins) {
       return origins.split(',').map((o) => o.trim());
     }
-    return ['http://localhost:3000', 'http://localhost:3001'];
+    return [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://localhost:5173',
+    ];
+  }
+
+  get frontendUrl(): string {
+    return (
+      this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:5173'
+    );
+  }
+
+  get vapidSubject(): string {
+    return this.configService.get<string>('VAPID_SUBJECT') ?? 'mailto:admin@example.com';
+  }
+
+  get vapidPublicKey(): string {
+    const value = this.getRequired('VAPID_PUBLIC_KEY');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
+  get vapidPrivateKey(): string {
+    const value = this.getRequired('VAPID_PRIVATE_KEY');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
+  get wsPort(): number {
+    return (
+      Number(this.configService.get<string>('WS_PORT')) ||
+      Number(this.configService.get<string>('PORT')) ||
+      3000
+    );
   }
 
   get redisHost(): string {

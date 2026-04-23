@@ -66,8 +66,35 @@ export class AuthService {
    * Returns Result<AuthUser, AppError> instead of throwing
    */
   validateGoogleUser(profile: Profile): Result<AuthUser, AppError> {
-    const primaryEmail = profile.emails?.[0]?.value;
+    const emailFromArray = (() => {
+      const emails = profile.emails ?? [];
+      // Prefer a verified email if passport-google-oauth20 provides it.
+      const verified = emails.find((e) => (e as unknown as { verified?: boolean }).verified);
+      return verified?.value ?? emails[0]?.value ?? null;
+    })();
+
+    // passport-google-oauth20 occasionally omits `profile.emails` depending on
+    // account / consent / scope behavior. Fall back to the raw JSON payload.
+    const json = profile._json as
+      | undefined
+      | {
+          email?: unknown;
+          emails?: unknown;
+        };
+    const emailFromJson =
+      (typeof json?.email === 'string' && json.email) ||
+      (Array.isArray(json?.emails) &&
+      typeof (json.emails[0] as { value?: unknown } | undefined)?.value === 'string'
+        ? ((json.emails[0] as { value: string }).value as string)
+        : null);
+
+    const primaryEmail = emailFromArray ?? emailFromJson;
     if (!primaryEmail) {
+      // Defensive logging: some Google accounts / consent flows omit email.
+      // Log only the presence of fields, not the values.
+      this.logger.warn(
+        `Google profile missing email; hasProfileEmails=${Boolean(profile.emails?.length)} hasJson=${Boolean(profile._json)} jsonKeys=${profile._json ? Object.keys(profile._json as Record<string, unknown>).join(',') : ''}`,
+      );
       return err(Errors.missingEmail());
     }
     const authUser: AuthUser = {
@@ -87,13 +114,10 @@ export class AuthService {
    * Returns Result<{user: User, authUser: AuthUser}, AppError>
    */
   async handleGoogleLogin(
-    profile: Profile,
+    authUser: AuthUser,
   ): Promise<Result<{ user: User; authUser: AuthUser }, AppError>> {
-    const validationResult = this.validateGoogleUser(profile);
-    if (validationResult.isErr()) {
-      return err(validationResult.error);
-    }
-    const authUser = validationResult.value;
+    // `authUser` is produced by GoogleStrategy.validate() → validateGoogleUser()
+    // before this controller runs, so we only need to upsert/persist here.
     const upsertResult = await this.userService.upsertGoogleUser(authUser);
     if (upsertResult.isErr()) {
       return err(upsertResult.error);

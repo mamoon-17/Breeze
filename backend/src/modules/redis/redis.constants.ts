@@ -1,0 +1,1 @@
+export const IOREDIS_CLIENT = 'IOREDIS_CLIENT';

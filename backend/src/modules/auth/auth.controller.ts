@@ -1,14 +1,14 @@
 import { Controller, Get, Post, Delete, Param, Req, Res, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import { FamilyIdParamDto } from './dto/family-id-param.dto';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response } from 'express';
 import { toHttpException } from '../../common/errors/error-handler';
 import { Errors } from '../../common/errors/app-error';
-import { Profile } from 'passport-google-oauth20';
 import { AuthService, RefreshTokensResult } from './auth.service';
-import type { AuthTokens, JwtRefreshPayload, JwtAccessPayload } from './types/auth.types';
+import type { AuthTokens, AuthUser, JwtRefreshPayload, JwtAccessPayload } from './types/auth.types';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
+import { GoogleOAuthGuard } from './guards/google-oauth.guard';
 import { AppConfigService } from '../../config/app-config.service';
 import { User } from './decorators/current-user.decorator';
 import { AccessToken } from './decorators/access-token.decorator';
@@ -17,6 +17,7 @@ import { RefreshToken } from './decorators/refresh-token.decorator';
 import { ClientInfo } from './decorators/client-info.decorator';
 import type { ClientInfo as ClientInfoType } from './decorators/client-info.decorator';
 import { User as UserEntity } from '../user/user.entity';
+import { SocketStateService } from '../socket/socket-state.service';
 
 @Controller('auth')
 export class AuthController {
@@ -24,23 +25,28 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly appConfigService: AppConfigService,
     private readonly jwtService: JwtService,
+    private readonly socketState: SocketStateService,
   ) {}
 
   @Get('google')
-  @UseGuards(AuthGuard('google'))
+  @UseGuards(GoogleOAuthGuard)
   googleAuth() {
     // Guard redirects to Google OAuth consent screen.
   }
 
   @Get('google/callback')
-  @UseGuards(AuthGuard('google'))
+  @UseGuards(GoogleOAuthGuard)
   async googleAuthCallback(
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
     @ClientInfo() clientInfo: ClientInfoType,
   ) {
-    const googleProfile = req.user as unknown as Profile;
-    const loginResult = await this.authService.handleGoogleLogin(googleProfile);
+    // GoogleStrategy.validate() populates req.user with an AuthUser (already validated).
+    const authUserFromStrategy = req.user as AuthUser | undefined;
+    if (!authUserFromStrategy) {
+      throw toHttpException(Errors.unauthorized('Google authentication failed'));
+    }
+    const loginResult = await this.authService.handleGoogleLogin(authUserFromStrategy);
     if (loginResult.isErr()) {
       throw toHttpException(loginResult.error);
     }
@@ -60,11 +66,17 @@ export class AuthController {
     }
     const tokens = tokensResult.value;
     this.setAuthCookies(res, tokens);
-    return {
-      message: 'Google authentication successful',
-      user: dbUser,
-      tokens,
-    };
+
+    // Redirect the browser back to the frontend callback. Tokens go in the
+    // URL fragment so they never hit any server log / Referer header.
+    const frontendUrl = this.appConfigService.frontendUrl.replace(/\/+$/, '');
+    const params = new URLSearchParams({
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      accessTokenExpiresIn: String(tokens.accessTokenExpiresIn),
+      refreshTokenExpiresIn: String(tokens.refreshTokenExpiresIn),
+    }).toString();
+    res.redirect(`${frontendUrl}/auth/callback#${params}`);
   }
 
   @Get('me')
@@ -150,6 +162,9 @@ export class AuthController {
       throw toHttpException(result.error);
     }
 
+    // Force-disconnect active websocket sessions for this user.
+    this.socketState.disconnectUser(payload.uid, 'logout');
+
     this.clearAuthCookies(res);
     return {
       message: 'Logged out successfully',
@@ -179,6 +194,9 @@ export class AuthController {
     if (result.isErr()) {
       throw toHttpException(result.error);
     }
+
+    // Force-disconnect active websocket sessions for this user.
+    this.socketState.disconnectUser(user.id, 'logout_all');
 
     this.clearAuthCookies(res);
     return {
@@ -241,7 +259,7 @@ export class AuthController {
    * This redirects to Google for re-authentication
    */
   @Get('step-up')
-  @UseGuards(AuthGuard('google'))
+  @UseGuards(GoogleOAuthGuard)
   stepUp() {
     // Guard redirects to Google OAuth for re-authentication
   }
@@ -251,15 +269,18 @@ export class AuthController {
    * Clears the step-up requirement after successful re-authentication
    */
   @Get('step-up/callback')
-  @UseGuards(AuthGuard('google'))
+  @UseGuards(GoogleOAuthGuard)
   async stepUpCallback(
     @Req() req: Request,
     @RefreshPayload() payload: JwtRefreshPayload,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const googleProfile = req.user as unknown as Profile;
-    
-    const loginResult = await this.authService.handleGoogleLogin(googleProfile);
+    const authUserFromStrategy = req.user as AuthUser | undefined;
+    if (!authUserFromStrategy) {
+      throw toHttpException(Errors.unauthorized('Google authentication failed'));
+    }
+
+    const loginResult = await this.authService.handleGoogleLogin(authUserFromStrategy);
     if (loginResult.isErr()) {
       throw toHttpException(loginResult.error);
     }
@@ -326,11 +347,11 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async revokeSessionFamily(
     @User() user: UserEntity,
-    @Param('familyId') familyId: string,
+    @Param() params: FamilyIdParamDto,
   ) {
     const result = await this.authService.revokeSessionFamilyByUser(
       user.id,
-      familyId,
+      params.familyId,
     );
     if (result.isErr()) {
       throw toHttpException(result.error);

@@ -10,6 +10,10 @@ import { AppConfigService } from './config/app-config.service';
 import { RedisModule } from './modules/redis/redis.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UserModule } from './modules/user/user.module';
+import { SocketModule } from './modules/socket/socket.module';
+import { ConversationModule } from './modules/conversation/conversation.module';
+import { ChatModule } from './modules/chat/chat.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -31,6 +35,10 @@ import { UserModule } from './modules/user/user.module';
         logging: !appConfigService.isProduction,
       }),
     }),
+    SocketModule,
+    ConversationModule,
+    ChatModule,
+    NotificationsModule,
     AuthModule,
     UserModule,
   ],

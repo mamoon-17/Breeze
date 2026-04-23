@@ -1,27 +1,32 @@
 import { Module, Global } from '@nestjs/common';
-import { CacheModule } from '@nestjs/cache-manager';
-import { redisStore } from 'cache-manager-ioredis-yet';
+import { Redis } from 'ioredis';
 import { AppConfigService } from '../../config/app-config.service';
 import { RedisService } from './redis.service';
+import { IOREDIS_CLIENT } from './redis.constants';
 
 @Global()
 @Module({
-  imports: [
-    CacheModule.registerAsync({
+  providers: [
+    {
+      provide: IOREDIS_CLIENT,
       inject: [AppConfigService],
-      useFactory: async (appConfigService: AppConfigService) => ({
-        store: await redisStore({
-          host: appConfigService.redisHost,
-          port: appConfigService.redisPort,
-          password: appConfigService.redisPassword,
-          db: appConfigService.redisDb,
-          ttl: 0,
+      useFactory: (cfg: AppConfigService): Redis =>
+        new Redis({
+          host: cfg.redisHost,
+          port: cfg.redisPort,
+          password: cfg.redisPassword,
+          db: cfg.redisDb,
           keyPrefix: 'breeze:',
+          // Fail fast on startup: connect once, no retries.
+          lazyConnect: true,
+          enableOfflineQueue: false,
+          maxRetriesPerRequest: 0,
+          connectTimeout: 2_000,
+          retryStrategy: () => null,
         }),
-      }),
-    }),
+    },
+    RedisService,
   ],
-  providers: [RedisService],
-  exports: [RedisService, CacheModule],
+  exports: [RedisService],
 })
 export class RedisModule {}

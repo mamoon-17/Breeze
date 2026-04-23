@@ -16,7 +16,7 @@ export class TokenBlacklistService {
   ): Promise<Result<void, AppError>> {
     try {
       const key = this.getKey(jti);
-      await this.redisService.set(key, '1', expiresInSeconds * 1000);
+      await this.redisService.set(key, '1', expiresInSeconds);
       
       this.logger.log(`Token ${jti} added to blacklist for ${expiresInSeconds}s`);
       return ok(undefined);
