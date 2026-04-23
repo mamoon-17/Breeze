@@ -13,10 +13,11 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { User } from '../auth/decorators/current-user.decorator';
 import { User as UserEntity } from '../user/user.entity';
 import { ConversationService } from './conversation.service';
+import { ConversationInvitationService } from './conversation-invitation.service';
 import { ChatService } from '../chat/chat.service';
 import { CreateDmDto } from './dto/create-dm.dto';
 import { CreateGroupDto } from './dto/create-group.dto';
-import { AddMemberDto } from './dto/add-member.dto';
+import { InviteEmailsDto } from './dto/invite-emails.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { ConversationIdParamDto } from './dto/conversation-id-param.dto';
 import { MemberIdParamDto } from './dto/member-id-param.dto';
@@ -27,6 +28,7 @@ import { HistoryQueryDto } from './dto/history-query.dto';
 export class ConversationController {
   constructor(
     private readonly conversationService: ConversationService,
+    private readonly invitationService: ConversationInvitationService,
     private readonly chatService: ChatService,
   ) {}
 
@@ -34,9 +36,9 @@ export class ConversationController {
 
   @Post('dm')
   async getOrCreateDm(@Body() dto: CreateDmDto, @User() user: UserEntity) {
-    const conversation = await this.conversationService.getOrCreateDm(
+    const conversation = await this.conversationService.getOrCreateDmByEmail(
       user.id,
-      dto.targetUserId,
+      dto.targetEmail,
     );
     return { conversationId: conversation.id };
   }
@@ -45,11 +47,14 @@ export class ConversationController {
 
   @Post('group')
   async createGroup(@Body() dto: CreateGroupDto, @User() user: UserEntity) {
-    const conversation = await this.conversationService.createGroup(
-      user.id,
-      dto,
-    );
-    return { conversationId: conversation.id, name: conversation.name };
+    const result = await this.conversationService.createGroup(user.id, dto);
+    return {
+      conversationId: result.conversation.id,
+      name: result.conversation.name,
+      invitations: result.invitations,
+      unknownEmails: result.unknownEmails,
+      skipped: result.skipped,
+    };
   }
 
   // ─── Shared ────────────────────────────────────────────────────────────────
@@ -93,14 +98,22 @@ export class ConversationController {
     return { members };
   }
 
-  @Post(':id/members')
-  async addMember(
+  /**
+   * Invite one or more users (by email) to a group. Unknown emails are
+   * returned in `unknownEmails` so the client can prompt "not on Breeze".
+   */
+  @Post(':id/invites')
+  async inviteToGroup(
     @Param() params: ConversationIdParamDto,
-    @Body() dto: AddMemberDto,
+    @Body() dto: InviteEmailsDto,
     @User() user: UserEntity,
   ) {
-    await this.conversationService.addMember(user.id, params.id, dto.userId);
-    return { message: 'Member added successfully' };
+    const result = await this.invitationService.inviteEmails(
+      user.id,
+      params.id,
+      dto.emails,
+    );
+    return result;
   }
 
   @Delete(':id/members/:userId')

@@ -9,7 +9,6 @@ import {
   In,
   IsNull,
   LessThan,
-  LessThanOrEqual,
   Not,
   Repository,
 } from 'typeorm';
@@ -126,23 +125,32 @@ export class ChatService {
   ): Promise<{ messageIds: string[]; readAt: Date }> {
     await this.conversationService.requireMember(userId, conversationId);
 
-    const cursor = await this.chatMessageRepository.findOne({
+    const cursorExists = await this.chatMessageRepository.findOne({
       where: { id: readUpToMessageId, room: conversationId },
+      select: ['id'],
     });
-    if (!cursor) {
+    if (!cursorExists) {
       throw new NotFoundException('Message not found in this conversation');
     }
 
     const now = new Date();
 
-    const toMark = await this.chatMessageRepository.find({
-      where: {
-        room: conversationId,
-        senderId: Not(userId),
-        createdAt: LessThanOrEqual(cursor.createdAt),
-      },
-      select: ['id'],
-    });
+    // IMPORTANT: compare createdAt entirely in SQL via a subquery. Round-tripping
+    // the cursor's timestamp through JS (`Date`, millisecond precision) silently
+    // truncates the microseconds Postgres actually stores, which caused the
+    // cursor row itself to fall OUT of a `createdAt <= :cursorTs` filter —
+    // leaving the latest message stuck on "Delivered" forever.
+    const toMark = await this.chatMessageRepository
+      .createQueryBuilder('m')
+      .select('m.id', 'id')
+      .where('m.room = :room', { room: conversationId })
+      .andWhere('m."senderId" != :userId', { userId })
+      .andWhere('m."deletedAt" IS NULL')
+      .andWhere(
+        `m."createdAt" <= (SELECT c."createdAt" FROM chat_messages c WHERE c.id = :cursorId)`,
+        { cursorId: readUpToMessageId },
+      )
+      .getRawMany<{ id: string }>();
 
     const ids = toMark.map((m) => m.id);
 

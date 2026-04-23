@@ -17,7 +17,12 @@ import { IOREDIS_CLIENT } from './redis.constants';
           password: cfg.redisPassword,
           db: cfg.redisDb,
           keyPrefix: 'breeze:',
-          lazyConnect: false,
+          // Fail fast on startup: connect once, no retries.
+          lazyConnect: true,
+          enableOfflineQueue: false,
+          maxRetriesPerRequest: 0,
+          connectTimeout: 2_000,
+          retryStrategy: () => null,
         }),
     },
     RedisService,

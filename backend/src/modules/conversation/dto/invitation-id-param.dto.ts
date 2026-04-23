@@ -1,8 +1,8 @@
 import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
 
-export class AddMemberDto {
+export class InvitationIdParamDto {
   @IsUUID()
   @IsString()
   @IsNotEmpty()
-  userId: string;
+  id: string;
 }

@@ -1,12 +1,12 @@
 import {
-  ArrayMinSize,
+  ArrayMaxSize,
   ArrayUnique,
   IsArray,
+  IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUrl,
-  IsUUID,
   MaxLength,
 } from 'class-validator';
 
@@ -16,11 +16,17 @@ export class CreateGroupDto {
   @MaxLength(255)
   name: string;
 
+  /**
+   * Emails to invite. Each one must belong to an existing Breeze user
+   * (frontend validates via the user lookup endpoint first). The creator
+   * is an immediate member; everyone else becomes a pending invitation.
+   */
   @IsArray()
-  @ArrayMinSize(1, { message: 'A group requires at least one other member' })
   @ArrayUnique()
-  @IsUUID('all', { each: true })
-  memberIds: string[];
+  @ArrayMaxSize(50)
+  @IsEmail({}, { each: true })
+  @IsOptional()
+  memberEmails?: string[];
 
   @IsOptional()
   @IsUrl()

@@ -8,6 +8,7 @@ import type {
   BreezeUser,
   Conversation,
   ChatMessage,
+  ConversationInvitation,
   SessionFamily,
 } from "./types";
 
@@ -178,27 +179,69 @@ export const Auth = {
 };
 
 export const Users = {
-  byId: (id: string) => api<BreezeUser>(`/user/${id}`),
+  byId: (id: string) => api<{ user: BreezeUser }>(`/user/${id}`),
   byEmail: (email: string) =>
-    api<BreezeUser>(`/user/email/${encodeURIComponent(email)}`),
+    api<{ user: BreezeUser }>(`/user/email/${encodeURIComponent(email)}`),
+  /**
+   * Returns the user if they exist, or `null` (instead of throwing) if not.
+   * Use this when building a UI that should show "not on Breeze" without
+   * treating a 404 as an error.
+   */
+  lookupByEmail: async (email: string): Promise<BreezeUser | null> => {
+    try {
+      const { user } = await api<{ user: BreezeUser }>(
+        `/user/email/${encodeURIComponent(email)}`,
+      );
+      return user;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  },
 };
+
+export interface CreateGroupResponse {
+  conversationId: string;
+  name: string | null;
+  invitations: ConversationInvitation[];
+  unknownEmails: string[];
+  skipped: { email: string; reason: string }[];
+}
+
+export interface InviteEmailsResponse {
+  invitations: ConversationInvitation[];
+  unknownEmails: string[];
+  skipped: { email: string; reason: string }[];
+}
 
 export const Conversations = {
   list: () => api<{ conversations: Conversation[] }>("/conversations"),
-  getOrCreateDm: (targetUserId: string) =>
+  getOrCreateDm: (targetEmail: string) =>
     api<{ conversationId: string }>("/conversations/dm", {
       method: "POST",
-      body: { targetUserId },
+      body: { targetEmail },
     }),
-  createGroup: (name: string, memberIds: string[], avatarUrl?: string) =>
-    api<{ conversationId: string; name: string }>("/conversations/group", {
+  createGroup: (name: string, memberEmails: string[], avatarUrl?: string) =>
+    api<CreateGroupResponse>("/conversations/group", {
       method: "POST",
-      body: { name, memberIds, avatarUrl },
+      body: { name, memberEmails, avatarUrl },
     }),
   members: (id: string) =>
-    api<{ members: { userId: string; user?: BreezeUser }[] }>(
-      `/conversations/${id}/members`,
-    ),
+    api<{
+      members: {
+        id: string;
+        userId: string;
+        conversationId: string;
+        joinedAt: string;
+        lastReadAt: string | null;
+        user: {
+          id: string;
+          email: string;
+          displayName: string;
+          avatarUrl: string | null;
+        } | null;
+      }[];
+    }>(`/conversations/${id}/members`),
   history: (id: string, limit = 50, before?: string) => {
     const qs = new URLSearchParams({ limit: String(limit) });
     if (before) qs.set("before", before);
@@ -206,13 +249,30 @@ export const Conversations = {
       `/conversations/${id}/history?${qs.toString()}`,
     );
   },
-  addMember: (id: string, userId: string) =>
-    api<{ message: string }>(`/conversations/${id}/members`, {
+  invite: (id: string, emails: string[]) =>
+    api<InviteEmailsResponse>(`/conversations/${id}/invites`, {
       method: "POST",
-      body: { userId },
+      body: { emails },
     }),
   removeMember: (id: string, userId: string) =>
     api<{ message: string }>(`/conversations/${id}/members/${userId}`, {
+      method: "DELETE",
+    }),
+};
+
+export const Invitations = {
+  list: () =>
+    api<{ invitations: ConversationInvitation[] }>(`/invitations`),
+  accept: (id: string) =>
+    api<{ conversationId: string }>(`/invitations/${id}/accept`, {
+      method: "POST",
+    }),
+  reject: (id: string) =>
+    api<{ message: string }>(`/invitations/${id}/reject`, {
+      method: "POST",
+    }),
+  cancel: (id: string) =>
+    api<{ message: string }>(`/invitations/${id}`, {
       method: "DELETE",
     }),
 };

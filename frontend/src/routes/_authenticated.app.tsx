@@ -5,10 +5,18 @@ import {
   useParams,
 } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
-import { Conversations } from "@/lib/breeze/api";
-import type { Conversation, ChatMessage, WsTyping } from "@/lib/breeze/types";
+import { Conversations, Invitations } from "@/lib/breeze/api";
+import type {
+  Conversation,
+  ChatMessage,
+  ConversationInvitation,
+  WsConversationCreated,
+  WsInvitationUpdated,
+  WsTyping,
+} from "@/lib/breeze/types";
 import { ConversationList } from "@/components/chat/ConversationList";
 import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
+import { InvitationsInbox } from "@/components/chat/InvitationsInbox";
 import { useAuth } from "@/lib/breeze/auth-context";
 import { getSocket } from "@/lib/breeze/socket";
 import {
@@ -31,6 +39,8 @@ function AppShell() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [openNew, setOpenNew] = useState(false);
+  const [openInvites, setOpenInvites] = useState(false);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pushPermission, setPushPermission] = useState<
@@ -77,6 +87,19 @@ function AppShell() {
 
   useEffect(() => {
     void refresh();
+  }, []);
+
+  const refreshInvitationCount = async () => {
+    try {
+      const { invitations } = await Invitations.list();
+      setPendingInviteCount(invitations.length);
+    } catch {
+      // Non-fatal — keep whatever count we already had.
+    }
+  };
+
+  useEffect(() => {
+    void refreshInvitationCount();
   }, []);
 
   // Web Push: register the service worker, re-sync an existing subscription
@@ -218,14 +241,48 @@ function AppShell() {
       });
     };
 
+    const onInvitationReceived = (inv: ConversationInvitation) => {
+      setPendingInviteCount((c) => c + 1);
+      toast(`${inv.inviter.displayName ?? inv.inviter.email} invited you to ${inv.conversation.name ?? "a group"}`, {
+        description: "Tap to review",
+        duration: 6000,
+        action: {
+          label: "View",
+          onClick: () => setOpenInvites(true),
+        },
+      });
+    };
+
+    const onInvitationUpdated = (evt: WsInvitationUpdated) => {
+      if (evt.status !== "pending") {
+        // Any resolution clears a pending slot on the invitee's side.
+        // Harmless when the event is for someone else.
+        setPendingInviteCount((c) => Math.max(0, c - 1));
+      }
+      // When someone else (or me) accepts an invite, membership may change —
+      // refresh the conversation list so new groups show up.
+      void refresh();
+    };
+
+    const onConversationCreated = (_evt: WsConversationCreated) => {
+      // A new DM was started with us (or by us on another device).
+      void refresh();
+    };
+
     socket.on("newMessage", onNewMessage);
     socket.on("userTyping", onUserTyping);
     socket.on("userStopTyping", onUserStopTyping);
+    socket.on("invitationReceived", onInvitationReceived);
+    socket.on("invitationUpdated", onInvitationUpdated);
+    socket.on("conversationCreated", onConversationCreated);
 
     return () => {
       socket.off("newMessage", onNewMessage);
       socket.off("userTyping", onUserTyping);
       socket.off("userStopTyping", onUserStopTyping);
+      socket.off("invitationReceived", onInvitationReceived);
+      socket.off("invitationUpdated", onInvitationUpdated);
+      socket.off("conversationCreated", onConversationCreated);
       for (const t of typingTimersRef.current.values()) clearTimeout(t);
       typingTimersRef.current.clear();
     };
@@ -266,6 +323,29 @@ function AppShell() {
             Breeze
           </span>
           <div className="flex items-center gap-1" ref={settingsRef}>
+            <button
+              onClick={() => setOpenInvites(true)}
+              className="relative flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground"
+              title="Invitations"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-[18px]"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                <polyline points="22,6 12,13 2,6" />
+              </svg>
+              {pendingInviteCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+                  {pendingInviteCount > 9 ? "9+" : pendingInviteCount}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => setOpenNew(true)}
               className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground"
@@ -443,6 +523,23 @@ function AppShell() {
         onClose={() => setOpenNew(false)}
         onCreated={async (conversationId) => {
           setOpenNew(false);
+          await refresh();
+          navigate({
+            to: "/app/$conversationId",
+            params: { conversationId },
+          });
+        }}
+      />
+
+      <InvitationsInbox
+        open={openInvites}
+        onClose={() => {
+          setOpenInvites(false);
+          void refreshInvitationCount();
+        }}
+        onAccepted={async (conversationId) => {
+          setOpenInvites(false);
+          await refreshInvitationCount();
           await refresh();
           navigate({
             to: "/app/$conversationId",

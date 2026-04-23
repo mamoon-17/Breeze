@@ -8,7 +8,7 @@ interface Member {
     displayName: string | null;
     email: string;
     avatarUrl?: string | null;
-  };
+  } | null;
 }
 
 interface Props {

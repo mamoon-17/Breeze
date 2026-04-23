@@ -16,6 +16,10 @@ import {
 import type {
   AuthTokens,
   ChatMessage,
+  ConversationInvitation,
+  WsConversationCreated,
+  WsInvitationUpdated,
+  WsMemberAdded,
   WsMessageDelivered,
   WsMessagesSeen,
   WsMessageDeleted,
@@ -41,6 +45,10 @@ export interface BreezeServerEvents {
   userTyping: (evt: WsTyping) => void;
   userStopTyping: (evt: WsTyping) => void;
   authExpired: (evt: WsAuthExpired) => void;
+  invitationReceived: (evt: ConversationInvitation) => void;
+  invitationUpdated: (evt: WsInvitationUpdated) => void;
+  memberAdded: (evt: WsMemberAdded) => void;
+  conversationCreated: (evt: WsConversationCreated) => void;
 }
 
 function clearProactiveRefresh() {

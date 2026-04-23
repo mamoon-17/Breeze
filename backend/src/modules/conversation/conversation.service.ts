@@ -6,11 +6,49 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Conversation } from './conversation.entity';
 import { Membership } from './membership.entity';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
+import { User } from '../user/user.entity';
+import { ChatMessage } from '../chat/chat-message.entity';
+import { MessageReceipt } from '../chat/message-receipt.entity';
+import {
+  ConversationInvitationService,
+  HydratedInvitation,
+} from './conversation-invitation.service';
+import { SocketStateService } from '../socket/socket-state.service';
+
+/**
+ * Conversation payload returned to the sidebar. DMs carry a lightweight `peer`
+ * projection so the UI can render the other participant's name/avatar without
+ * an extra /members round-trip. `lastMessage` + `unreadCount` are hydrated
+ * server-side so that a page refresh restores the exact same sidebar the user
+ * saw live, without the "No messages yet" flash.
+ */
+export interface HydratedConversation {
+  id: string;
+  type: Conversation['type'];
+  name: string | null;
+  avatarUrl: string | null;
+  createdAt: Date;
+  peer: {
+    id: string;
+    email: string;
+    displayName: string;
+    avatarUrl: string | null;
+  } | null;
+  lastMessage: {
+    id: string;
+    room: string;
+    senderId: string;
+    message: string;
+    sentAt: Date;
+    createdAt: Date;
+  } | null;
+  unreadCount: number;
+}
 
 @Injectable()
 export class ConversationService {
@@ -21,7 +59,15 @@ export class ConversationService {
     private readonly conversationRepository: Repository<Conversation>,
     @InjectRepository(Membership)
     private readonly membershipRepository: Repository<Membership>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    @InjectRepository(ChatMessage)
+    private readonly chatMessageRepository: Repository<ChatMessage>,
+    @InjectRepository(MessageReceipt)
+    private readonly receiptRepository: Repository<MessageReceipt>,
     private readonly dataSource: DataSource,
+    private readonly invitationService: ConversationInvitationService,
+    private readonly socketState: SocketStateService,
   ) {}
 
   // ─── DM ──────────────────────────────────────────────────────────────────────
@@ -46,7 +92,7 @@ export class ConversationService {
       return existing;
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const created = await this.dataSource.transaction(async (manager) => {
       const conversation = manager.create(Conversation, {
         type: 'dm',
         name: null,
@@ -61,43 +107,94 @@ export class ConversationService {
 
       return saved;
     });
+
+    // Push the newly created DM to both participants so their sidebars update
+    // in realtime — no refresh required.
+    for (const userId of [userIdA, userIdB]) {
+      this.socketState.emitToUser(userId, 'conversationCreated', {
+        id: created.id,
+        type: created.type,
+        name: created.name,
+        avatarUrl: created.avatarUrl,
+        createdAt: created.createdAt,
+      });
+    }
+
+    return created;
+  }
+
+  /**
+   * DM creation by email. DMs don't require invitations — once both parties
+   * exist, the conversation is visible for both of them.
+   */
+  async getOrCreateDmByEmail(
+    requesterId: string,
+    targetEmail: string,
+  ): Promise<Conversation> {
+    const normalized = targetEmail.trim().toLowerCase();
+    const target = await this.userRepository.findOne({
+      where: { email: normalized },
+    });
+    if (!target) {
+      throw new NotFoundException('User not found');
+    }
+    return this.getOrCreateDm(requesterId, target.id);
   }
 
   // ─── Group ───────────────────────────────────────────────────────────────────
 
+  /**
+   * Creates a group where the creator is the only immediate member. Everyone
+   * else is invited and must accept before joining.
+   */
   async createGroup(
     creatorId: string,
     dto: CreateGroupDto,
-  ): Promise<Conversation> {
-    const memberIds = [...new Set([creatorId, ...dto.memberIds])];
-
-    // After deduplication (creator may already be in memberIds), a group needs
-    // at least 2 distinct participants — otherwise it's just a note-to-self.
-    if (memberIds.length < 2) {
-      throw new BadRequestException(
-        'A group conversation requires at least one other member besides yourself',
-      );
-    }
-
-    return this.dataSource.transaction(async (manager) => {
-      const conversation = manager.create(Conversation, {
+  ): Promise<{
+    conversation: Conversation;
+    invitations: HydratedInvitation[];
+    unknownEmails: string[];
+    skipped: { email: string; reason: string }[];
+  }> {
+    const conversation = await this.dataSource.transaction(async (manager) => {
+      const convo = manager.create(Conversation, {
         type: 'group',
         name: dto.name,
         avatarUrl: dto.avatarUrl ?? null,
       });
-      const saved = await manager.save(conversation);
+      const saved = await manager.save(convo);
 
-      await manager.insert(
-        Membership,
-        memberIds.map((userId) => ({
-          userId,
-          conversationId: saved.id,
-          lastReadAt: null,
-        })),
-      );
+      await manager.insert(Membership, {
+        userId: creatorId,
+        conversationId: saved.id,
+        lastReadAt: null,
+      });
 
       return saved;
     });
+
+    const emails = dto.memberEmails ?? [];
+    if (emails.length === 0) {
+      return {
+        conversation,
+        invitations: [],
+        unknownEmails: [],
+        skipped: [],
+      };
+    }
+
+    const result = await this.invitationService.inviteEmails(
+      creatorId,
+      conversation.id,
+      emails,
+    );
+
+    return {
+      conversation,
+      invitations: result.invitations,
+      unknownEmails: result.unknownEmails,
+      skipped: result.skipped,
+    };
   }
 
   async updateConversation(
@@ -117,44 +214,6 @@ export class ConversationService {
     if (dto.avatarUrl !== undefined) conversation.avatarUrl = dto.avatarUrl;
 
     return this.conversationRepository.save(conversation);
-  }
-
-  async addMember(
-    requesterId: string,
-    conversationId: string,
-    newUserId: string,
-  ): Promise<void> {
-    const conversation = await this.findOneOrFail(conversationId);
-
-    if (conversation.type === 'dm') {
-      throw new BadRequestException('Cannot add members to a DM conversation');
-    }
-
-    await this.requireMember(requesterId, conversationId);
-
-    const existing = await this.membershipRepository.findOne({
-      where: { userId: newUserId, conversationId },
-      withDeleted: true,
-    });
-
-    if (existing && !existing.leftAt) {
-      throw new BadRequestException('User is already a member of this conversation');
-    }
-
-    if (existing && existing.leftAt) {
-      await this.membershipRepository.restore({ id: existing.id });
-      await this.membershipRepository.update(
-        { id: existing.id },
-        { lastReadAt: null },
-      );
-      return;
-    }
-
-    await this.membershipRepository.insert({
-      userId: newUserId,
-      conversationId,
-      lastReadAt: null,
-    });
   }
 
   async removeMember(
@@ -203,12 +262,52 @@ export class ConversationService {
   async getMembers(
     requesterId: string,
     conversationId: string,
-  ): Promise<Membership[]> {
+  ): Promise<
+    Array<{
+      id: string;
+      userId: string;
+      conversationId: string;
+      joinedAt: Date;
+      lastReadAt: Date | null;
+      user: {
+        id: string;
+        email: string;
+        displayName: string;
+        avatarUrl: string | null;
+      } | null;
+    }>
+  > {
     await this.requireMember(requesterId, conversationId);
 
-    return this.membershipRepository.find({
+    const memberships = await this.membershipRepository.find({
       where: { conversationId },
       order: { joinedAt: 'ASC' },
+    });
+
+    if (memberships.length === 0) return [];
+
+    const users = await this.userRepository.find({
+      where: { id: In(memberships.map((m) => m.userId)) },
+    });
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    return memberships.map((m) => {
+      const u = userById.get(m.userId);
+      return {
+        id: m.id,
+        userId: m.userId,
+        conversationId: m.conversationId,
+        joinedAt: m.joinedAt,
+        lastReadAt: m.lastReadAt,
+        user: u
+          ? {
+              id: u.id,
+              email: u.email,
+              displayName: u.displayName,
+              avatarUrl: u.picture ?? null,
+            }
+          : null,
+      };
     });
   }
 
@@ -229,12 +328,120 @@ export class ConversationService {
     return rows.map((r) => r.userId);
   }
 
-  async getConversationsForUser(userId: string): Promise<Conversation[]> {
-    return this.conversationRepository
+  async getConversationsForUser(
+    userId: string,
+  ): Promise<HydratedConversation[]> {
+    const conversations = await this.conversationRepository
       .createQueryBuilder('c')
       .innerJoin('c.memberships', 'm', 'm.userId = :userId', { userId })
       .orderBy('c.createdAt', 'DESC')
       .getMany();
+
+    if (conversations.length === 0) return [];
+
+    // For DMs, look up the "other" membership to hydrate the peer avatar/name
+    // in a single query — the sidebar is entirely name-driven and we don't
+    // want to force the client to fan out to /members for every conversation.
+    const dmIds = conversations
+      .filter((c) => c.type === 'dm')
+      .map((c) => c.id);
+
+    const peerByConversation = new Map<string, User>();
+
+    if (dmIds.length > 0) {
+      const peerMemberships = await this.membershipRepository
+        .createQueryBuilder('m')
+        .where('m.conversationId IN (:...ids)', { ids: dmIds })
+        .andWhere('m.userId != :userId', { userId })
+        .getMany();
+
+      const peerUserIds = Array.from(
+        new Set(peerMemberships.map((m) => m.userId)),
+      );
+      const peers =
+        peerUserIds.length > 0
+          ? await this.userRepository.find({
+              where: { id: In(peerUserIds) },
+            })
+          : [];
+      const peerById = new Map(peers.map((u) => [u.id, u]));
+
+      for (const m of peerMemberships) {
+        const peer = peerById.get(m.userId);
+        if (peer) peerByConversation.set(m.conversationId, peer);
+      }
+    }
+
+    const conversationIds = conversations.map((c) => c.id);
+
+    // Last message per conversation — one row per room via DISTINCT ON
+    // (Postgres). Sorted by createdAt DESC so we pick up the newest non-deleted
+    // message, which is what the sidebar preview wants to show.
+    const lastMessages: ChatMessage[] =
+      conversationIds.length > 0
+        ? await this.chatMessageRepository
+            .createQueryBuilder('m')
+            .distinctOn(['m.room'])
+            .where('m.room IN (:...ids)', { ids: conversationIds })
+            .andWhere('m."deletedAt" IS NULL')
+            .orderBy('m.room')
+            .addOrderBy('m."createdAt"', 'DESC')
+            .getMany()
+        : [];
+    const lastMessageByConversation = new Map(
+      lastMessages.map((m) => [m.room, m]),
+    );
+
+    // Unread counts: how many messages in each conversation this user hasn't
+    // read yet (receipts rows for the current user with readAt IS NULL).
+    const unreadRows =
+      conversationIds.length > 0
+        ? await this.receiptRepository
+            .createQueryBuilder('r')
+            .innerJoin('r.message', 'm')
+            .select('m.room', 'conversationId')
+            .addSelect('COUNT(*)', 'unreadCount')
+            .where('r.userId = :userId', { userId })
+            .andWhere('r.readAt IS NULL')
+            .andWhere('m."deletedAt" IS NULL')
+            .andWhere('m.room IN (:...ids)', { ids: conversationIds })
+            .groupBy('m.room')
+            .getRawMany<{ conversationId: string; unreadCount: string }>()
+        : [];
+    const unreadByConversation = new Map(
+      unreadRows.map((r) => [r.conversationId, Number(r.unreadCount) || 0]),
+    );
+
+    return conversations.map((c) => {
+      const peer = peerByConversation.get(c.id);
+      const last = lastMessageByConversation.get(c.id) ?? null;
+      return {
+        id: c.id,
+        type: c.type,
+        name: c.name,
+        avatarUrl: c.avatarUrl,
+        createdAt: c.createdAt,
+        peer: peer
+          ? {
+              id: peer.id,
+              email: peer.email,
+              displayName: peer.displayName,
+              avatarUrl: peer.picture ?? null,
+            }
+          : null,
+        lastMessage: last
+          ? {
+              id: last.id,
+              room: last.room,
+              senderId: last.senderId,
+              message: last.message,
+              sentAt: last.sentAt,
+              createdAt: last.createdAt,
+            }
+          : null,
+        unreadCount: unreadByConversation.get(c.id) ?? 0,
+      };
+    });
   }
 
   async findOneOrFail(conversationId: string): Promise<Conversation> {

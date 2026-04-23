@@ -4,7 +4,6 @@ import { Conversations } from "@/lib/breeze/api";
 import type {
   ChatMessage,
   Conversation,
-  WsAuthExpired,
   WsMessageDeleted,
   WsMessageDelivered,
   WsMessagesSeen,
@@ -43,7 +42,7 @@ function ConversationView() {
         displayName: string | null;
         email: string;
         avatarUrl?: string | null;
-      };
+      } | null;
     }[]
   >([]);
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -180,19 +179,10 @@ function ConversationView() {
       );
     };
 
-    const onAuthExpired = (evt: WsAuthExpired) => {
-      // The socket layer already attempts a silent refresh + reconnect.
-      // This toast gives the user a heads-up if anything lingers.
-      if (evt.reason === "refresh_session_invalid") {
-        toast.error("Your session expired — please sign in again");
-      }
-    };
-
     socket.on("newMessage", onNewMessage);
     socket.on("messageDelivered", onDelivered);
     socket.on("messagesSeen", onSeen);
     socket.on("messageDeleted", onMessageDeleted);
-    socket.on("authExpired", onAuthExpired);
 
     const onUserOnline = (evt: WsUserOnline) => {
       setOnlineUserIds((prev) => new Set([...prev, evt.userId]));
@@ -243,7 +233,6 @@ function ConversationView() {
       socket.off("messageDelivered", onDelivered);
       socket.off("messagesSeen", onSeen);
       socket.off("messageDeleted", onMessageDeleted);
-      socket.off("authExpired", onAuthExpired);
       socket.off("userOnline", onUserOnline);
       socket.off("userOffline", onUserOffline);
       socket.off("userTyping", onUserTyping);

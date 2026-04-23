@@ -69,7 +69,7 @@ export class ChatGateway
 
   async handleConnection(client: AuthenticatedSocket) {
     const userId = client.data.user.id;
-    this.socketState.addSocket(userId, client.id);
+    const justCameOnline = this.socketState.addSocket(userId, client.id);
 
     // Validate refresh session mid-connection (on each inbound packet).
     // If refresh token/session is expired or revoked, disconnect gracefully.
@@ -156,8 +156,13 @@ export class ChatGateway
     const roomIds = conversations.map((c) => c.id);
     if (roomIds.length > 0) {
       await client.join(roomIds);
-      for (const room of roomIds) {
-        this.socketState.emitToRoom(room, 'userOnline', { userId });
+      // Only broadcast 'userOnline' on the user's FIRST active socket — if
+      // they already had another tab open, peers already saw them online and
+      // a duplicate event would be noise.
+      if (justCameOnline) {
+        for (const room of roomIds) {
+          this.socketState.emitToRoom(room, 'userOnline', { userId });
+        }
       }
     }
 
@@ -167,12 +172,20 @@ export class ChatGateway
   handleDisconnect(client: AuthenticatedSocket) {
     const userId = client.data.user?.id;
     if (userId) {
+      // Snapshot the rooms BEFORE removeSocket/disconnect finishes — by the
+      // time Socket.IO tears down, client.rooms is empty and we'd broadcast
+      // nothing. This is the same reason we excluded `client.id` (the
+      // auto-join "self" room) below.
+      const rooms = Array.from(client.rooms).filter((r) => r !== client.id);
+
       this.socketState.removeSocket(userId, client.id);
 
-      // Presence: broadcast offline to all rooms this socket was in.
-      // Note: `client.rooms` includes the socket id itself; exclude it.
-      for (const room of client.rooms) {
-        if (room !== client.id) {
+      // Presence: only broadcast 'userOffline' when THIS user has no other
+      // active sockets. Multi-tab / multi-device users stay "online" as long
+      // as at least one tab is still connected — closing a single tab must
+      // not make peers see them as offline.
+      if (!this.socketState.isUserOnline(userId)) {
+        for (const room of rooms) {
           this.socketState.emitToRoom(room, 'userOffline', { userId });
         }
       }

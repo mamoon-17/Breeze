@@ -112,3 +112,53 @@ export interface WsAuthExpired {
     | "session_validation_failed"
     | string;
 }
+
+export type InvitationStatus =
+  | "pending"
+  | "accepted"
+  | "rejected"
+  | "cancelled";
+
+export interface ConversationInvitation {
+  id: string;
+  status: InvitationStatus;
+  createdAt: string;
+  respondedAt: string | null;
+  conversation: {
+    id: string;
+    type: ConversationType;
+    name: string | null;
+    avatarUrl: string | null;
+  };
+  inviter: {
+    id: string;
+    email: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  };
+  invitee: {
+    id: string;
+    email: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  };
+}
+
+export interface WsInvitationUpdated {
+  id: string;
+  status: InvitationStatus;
+  conversationId: string;
+}
+
+export interface WsMemberAdded {
+  conversationId: string;
+  userId: string;
+}
+
+export interface WsConversationCreated {
+  id: string;
+  type: ConversationType;
+  name: string | null;
+  avatarUrl: string | null;
+  createdAt: string;
+}

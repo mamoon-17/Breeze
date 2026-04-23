@@ -7,13 +7,21 @@ export class SocketStateService {
 
   private userSockets: Map<string, Set<string>> = new Map();
 
-  addSocket(userId: string, socketId: string): void {
+  /**
+   * Register a socket for a user. Returns true if this is the user's first
+   * active socket (i.e. they just came online), false if they already had
+   * other tabs/devices connected. The caller uses this to avoid broadcasting
+   * redundant `userOnline` events on every tab-open.
+   */
+  addSocket(userId: string, socketId: string): boolean {
     let set = this.userSockets.get(userId);
+    const wasOffline = !set || set.size === 0;
     if (!set) {
       set = new Set<string>();
       this.userSockets.set(userId, set);
     }
     set.add(socketId);
+    return wasOffline;
   }
 
   removeSocket(userId: string, socketId: string): void {
@@ -63,5 +71,17 @@ export class SocketStateService {
 
   emitToSocket(socketId: string, event: string, data: unknown) {
     this.server.to(socketId).emit(event, data);
+  }
+
+  /**
+   * Emit an event to every active socket owned by a specific user.
+   * No-op if the user has no active connections.
+   */
+  emitToUser(userId: string, event: string, data: unknown) {
+    const set = this.userSockets.get(userId);
+    if (!set || set.size === 0) return;
+    for (const socketId of set) {
+      this.server.to(socketId).emit(event, data);
+    }
   }
 }

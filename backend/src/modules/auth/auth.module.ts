@@ -17,7 +17,6 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { JwtRefreshAuthGuard } from './guards/jwt-refresh-auth.guard';
 import { StepUpRequiredGuard } from './guards/step-up-required.guard';
 import { UserModule } from '../user/user.module';
-import { RedisModule } from '../redis/redis.module';
 import { RefreshSession } from './refresh-session.entity';
 import { RefreshEvent } from './refresh-event.entity';
 import { RefreshSessionCleanupService } from './refresh-session-cleanup.service';
@@ -42,7 +41,6 @@ const googleStrategyProviders: Provider[] = googleOAuthEnabled
     JwtModule.register({}),
     PassportModule.register({}),
     UserModule,
-    RedisModule,
     TypeOrmModule.forFeature([RefreshSession, RefreshEvent]),
   ],
   controllers: [AuthController],
