@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/breeze/types";
 import { format } from "date-fns";
+import { AttachmentLightbox, type LightboxItem } from "./AttachmentLightbox";
 
 interface Member {
   userId: string;
@@ -144,6 +145,20 @@ function Bubble({
 }) {
   const deleted = Boolean(message.deletedAt);
   const status = mine && !deleted ? deriveStatus(message) : null;
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxStart, setLightboxStart] = useState(0);
+
+  const mediaItems = useMemo(() => {
+    const atts = message.attachments ?? [];
+    const items: LightboxItem[] = [];
+    for (const a of atts) {
+      const url = a.url;
+      if (!url) continue;
+      if (a.type === "image") items.push({ type: "image", url, filename: a.filename });
+      if (a.type === "video") items.push({ type: "video", url, filename: a.filename });
+    }
+    return items;
+  }, [message.attachments]);
 
   return (
     <div
@@ -152,6 +167,12 @@ function Bubble({
         mine ? "ml-auto items-end" : "items-start",
       ].join(" ")}
     >
+      <AttachmentLightbox
+        open={lightboxOpen}
+        items={mediaItems}
+        startIndex={lightboxStart}
+        onClose={() => setLightboxOpen(false)}
+      />
       {showHeader && (
         <span
           className={[
@@ -228,7 +249,82 @@ function Bubble({
                 : "rounded-3xl rounded-tl-md border border-linen-100 bg-card text-foreground",
             ].join(" ")}
           >
-            {message.attachmentType === "audio" && message.attachmentUrl ? (
+            {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <div className="grid max-w-[420px] grid-cols-2 gap-2">
+                  {message.attachments.map((a) => {
+                    if (a.type === "image" && a.url) {
+                      const idx = mediaItems.findIndex((i) => i.url === a.url);
+                      return (
+                        <button
+                          key={a.id}
+                          className="overflow-hidden rounded-xl border border-linen-100"
+                          type="button"
+                          onClick={() => {
+                            setLightboxStart(Math.max(0, idx));
+                            setLightboxOpen(true);
+                          }}
+                        >
+                          <img
+                            src={a.url}
+                            alt={a.filename ?? ""}
+                            className="h-28 w-full object-cover"
+                            loading="lazy"
+                          />
+                        </button>
+                      );
+                    }
+                    if (a.type === "video" && a.url) {
+                      const idx = mediaItems.findIndex((i) => i.url === a.url);
+                      return (
+                        <button
+                          key={a.id}
+                          type="button"
+                          className="relative h-28 w-full overflow-hidden rounded-xl border border-linen-100 bg-black/10"
+                          onClick={() => {
+                            setLightboxStart(Math.max(0, idx));
+                            setLightboxOpen(true);
+                          }}
+                        >
+                          <video
+                            preload="metadata"
+                            src={a.url}
+                            className="h-28 w-full object-cover opacity-95"
+                          />
+                          <span className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-white">
+                            Play
+                          </span>
+                        </button>
+                      );
+                    }
+                    if (a.type === "audio" && a.url) {
+                      return (
+                        <audio
+                          key={a.id}
+                          controls
+                          preload="metadata"
+                          src={a.url}
+                          className="w-full"
+                        />
+                      );
+                    }
+                    return (
+                      <a
+                        key={a.id}
+                        href={a.url ?? "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-between gap-2 rounded-xl border border-linen-100 bg-white/40 px-3 py-2 text-xs"
+                      >
+                        <span className="truncate">{a.filename ?? "Attachment"}</span>
+                        <span className="shrink-0 opacity-60">Open</span>
+                      </a>
+                    );
+                  })}
+                </div>
+                {message.message ? <div>{message.message}</div> : null}
+              </div>
+            ) : message.attachmentType === "audio" && message.attachmentUrl ? (
               <div className="flex flex-col gap-2">
                 <audio
                   controls

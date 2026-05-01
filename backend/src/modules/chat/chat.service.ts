@@ -17,18 +17,37 @@ import { ConversationService } from '../conversation/conversation.service';
 import { ChatMessage } from './chat-message.entity';
 import { MessageReceipt } from './message-receipt.entity';
 import { SendMessageDto } from './dto/send-message.dto';
+import { ChatMessageAttachment } from './chat-message-attachment.entity';
+import { AppConfigService } from '../../config/app-config.service';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 @Injectable()
 export class ChatService {
+  private readonly s3: S3Client;
+
   constructor(
     @InjectRepository(ChatMessage)
     private readonly chatMessageRepository: Repository<ChatMessage>,
     @InjectRepository(MessageReceipt)
     private readonly receiptRepository: Repository<MessageReceipt>,
+    @InjectRepository(ChatMessageAttachment)
+    private readonly attachmentRepository: Repository<ChatMessageAttachment>,
     private readonly dataSource: DataSource,
     private readonly conversationService: ConversationService,
     private readonly socketState: SocketStateService,
-  ) {}
+    private readonly appConfig: AppConfigService,
+  ) {
+    this.s3 = new S3Client({
+      region: appConfig.s3Region,
+      endpoint: appConfig.s3Endpoint,
+      credentials: {
+        accessKeyId: appConfig.s3AccessKeyId,
+        secretAccessKey: appConfig.s3SecretAccessKey,
+      },
+      forcePathStyle: Boolean(appConfig.s3Endpoint),
+    });
+  }
 
   async saveMessage(dto: SendMessageDto, senderId: string): Promise<ChatMessage> {
     const memberIds = await this.conversationService.getMemberUserIds(dto.room);
@@ -48,6 +67,23 @@ export class ChatService {
       });
       const message = await manager.save(msg);
 
+      if (dto.attachments && dto.attachments.length > 0) {
+        await manager.insert(
+          ChatMessageAttachment,
+          dto.attachments.map((a) => ({
+            messageId: message.id,
+            type: a.type,
+            key: a.key,
+            mime: a.mime,
+            size: String(a.size),
+            filename: a.filename ?? null,
+            width: null,
+            height: null,
+            durationMs: null,
+          })),
+        );
+      }
+
       const recipients = memberIds.filter((id) => id !== senderId);
       if (recipients.length > 0) {
         await manager.insert(
@@ -64,10 +100,12 @@ export class ChatService {
       return message;
     });
 
-    return this.chatMessageRepository.findOneOrFail({
+    const full = await this.chatMessageRepository.findOneOrFail({
       where: { id: saved.id },
-      relations: ['receipts'],
+      relations: ['receipts', 'attachments'],
     });
+    await this.hydrateAttachmentUrls([full]);
+    return full;
   }
 
   async deliverPendingMessages(
@@ -198,7 +236,7 @@ export class ChatService {
       }
     }
 
-    return this.chatMessageRepository.find({
+    const messages = await this.chatMessageRepository.find({
       where: {
         room,
         deletedAt: IsNull(),
@@ -206,8 +244,32 @@ export class ChatService {
       },
       order: { createdAt: 'DESC' },
       take: limit,
-      relations: ['receipts'],
+      relations: ['receipts', 'attachments'],
     });
+    await this.hydrateAttachmentUrls(messages);
+    return messages;
+  }
+
+  private async hydrateAttachmentUrls(messages: ChatMessage[]): Promise<void> {
+    const toSign: { key: string; target: Record<string, unknown> }[] = [];
+    for (const m of messages) {
+      for (const a of m.attachments ?? []) {
+        // Mutate the serialized object with a signed URL for clients.
+        toSign.push({ key: a.key, target: a as unknown as Record<string, unknown> });
+      }
+    }
+    if (toSign.length === 0) return;
+
+    await Promise.all(
+      toSign.map(async ({ key, target }) => {
+        const url = await getSignedUrl(
+          this.s3,
+          new GetObjectCommand({ Bucket: this.appConfig.s3Bucket, Key: key }),
+          { expiresIn: 60 * 60 * 24 * 7 },
+        );
+        target.url = url;
+      }),
+    );
   }
 
   async deleteMessage(

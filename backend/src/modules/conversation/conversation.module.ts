@@ -13,6 +13,7 @@ import { ConversationInvitation } from './conversation-invitation.entity';
 import { User } from '../user/user.entity';
 import { ChatMessage } from '../chat/chat-message.entity';
 import { MessageReceipt } from '../chat/message-receipt.entity';
+import { ChatMessageAttachment } from '../chat/chat-message-attachment.entity';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { MessageReceipt } from '../chat/message-receipt.entity';
       User,
       ChatMessage,
       MessageReceipt,
+      ChatMessageAttachment,
     ]),
     AuthModule,
     UserModule,

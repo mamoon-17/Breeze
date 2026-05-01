@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 import { MessageReceipt } from './message-receipt.entity';
+import { ChatMessageAttachment } from './chat-message-attachment.entity';
 
 @Entity('chat_messages')
 export class ChatMessage {
@@ -43,4 +44,7 @@ export class ChatMessage {
 
   @OneToMany(() => MessageReceipt, (r) => r.message)
   receipts: MessageReceipt[];
+
+  @OneToMany(() => ChatMessageAttachment, (a) => a.message)
+  attachments: ChatMessageAttachment[];
 }

@@ -19,6 +19,7 @@ import { NewConversationDialog } from "@/components/chat/NewConversationDialog";
 import { InvitationsInbox } from "@/components/chat/InvitationsInbox";
 import { useAuth } from "@/lib/breeze/auth-context";
 import { getSocket } from "@/lib/breeze/socket";
+import { joinRoom } from "@/lib/breeze/socket";
 import {
   currentPermission,
   disablePushNotifications,
@@ -98,6 +99,15 @@ function AppShell() {
     try {
       const { conversations: list } = await Conversations.list();
       setConversations(list);
+      // Ensure this socket is joined to all conversation rooms, including DMs/groups
+      // created after the initial websocket connection.
+      for (const c of list) {
+        try {
+          joinRoom(c.id);
+        } catch {
+          // ignore
+        }
+      }
     } catch (err) {
       const e = err as { status?: number; message?: string };
       if (e?.status !== 401) {
@@ -211,13 +221,24 @@ function AppShell() {
 
     const onNewMessage = (msg: ChatMessage) => {
       const isActive = activeConvoRef.current === msg.room;
+      const enriched: ChatMessage = {
+        ...msg,
+        attachmentsCount:
+          msg.attachmentsCount ??
+          (Array.isArray(msg.attachments) ? msg.attachments.length : 0),
+        firstAttachmentType:
+          msg.firstAttachmentType ??
+          (Array.isArray(msg.attachments) && msg.attachments.length > 0
+            ? (msg.attachments[0]?.type ?? null)
+            : null),
+      };
 
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id !== msg.room) return c;
           return {
             ...c,
-            lastMessage: msg,
+            lastMessage: enriched,
             // Only increment badge when the conversation isn't open.
             unreadCount: isActive ? 0 : (c.unreadCount ?? 0) + 1,
           };
@@ -233,7 +254,20 @@ function AppShell() {
             ? (convo.peer?.displayName ?? convo.peer?.email ?? "Someone")
             : (convo?.name ?? "Group");
 
-        toast(msg.message, {
+        const toastBody = (() => {
+          const text =
+            typeof enriched.message === "string" ? enriched.message.trim() : "";
+          if (text) return text;
+          const n = enriched.attachmentsCount ?? 0;
+          if (n <= 0) return "New message";
+          const t = enriched.firstAttachmentType;
+          if (t === "image") return n > 1 ? `${n} photos` : "Photo";
+          if (t === "video") return n > 1 ? `${n} videos` : "Video";
+          if (t === "audio") return n > 1 ? `${n} voice messages` : "Voice message";
+          return n > 1 ? `${n} attachments` : "Attachment";
+        })();
+
+        toast(toastBody, {
           description: senderName,
           duration: 4000,
           action: {
@@ -258,10 +292,7 @@ function AppShell() {
             .getRegistration("/")
             .then((reg) => {
               if (!reg) return;
-              const body =
-                typeof msg.message === "string" && msg.message.trim()
-                  ? msg.message
-                  : "You have a new message";
+              const body = toastBody || "You have a new message";
               return reg.showNotification("New message", {
                 body,
                 tag: `breeze-room-${msg.room}`,

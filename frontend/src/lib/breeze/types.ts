@@ -74,10 +74,26 @@ export interface ChatMessage {
   message: string;
   attachmentUrl?: string | null;
   attachmentType?: "audio" | string | null;
+  attachmentsCount?: number;
+  firstAttachmentType?: string | null;
   sentAt: string;
   createdAt: string;
   deletedAt?: string | null;
   receipts?: MessageReceipt[];
+  attachments?: {
+    id: string;
+    messageId: string;
+    type: "image" | "video" | "audio" | "file" | string;
+    key: string;
+    url?: string;
+    mime: string;
+    size: string;
+    filename?: string | null;
+    width?: number | null;
+    height?: number | null;
+    durationMs?: number | null;
+    createdAt: string;
+  }[];
   /**
    * Client-only field for instant rendering while we wait for the server
    * echo. Never persisted and never sent over the wire.

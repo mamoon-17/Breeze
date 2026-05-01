@@ -2,9 +2,17 @@ import { Injectable, Logger, BadRequestException, NotFoundException } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
-import { promises as fs, createReadStream, ReadStream } from 'fs';
+import { promises as fs, createReadStream } from 'fs';
 import * as path from 'path';
 import { User } from './user.entity';
+import { AppConfigService } from '../../config/app-config.service';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
+import type { Readable } from 'stream';
 
 const ALLOWED_MIMES = new Set([
   'image/jpeg',
@@ -19,7 +27,7 @@ const DOWNLOAD_TIMEOUT_MS = 10_000;
 export interface AvatarBinary {
   path: string;
   mime: string;
-  stream: ReadStream;
+  stream: Readable;
 }
 
 /**
@@ -35,13 +43,27 @@ export class AvatarService {
   private readonly storageDir = path.resolve(
     process.env.AVATAR_STORAGE_DIR ?? path.join(process.cwd(), 'storage', 'avatars'),
   );
+  private readonly s3: S3Client;
 
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
-  ) {}
+    private readonly appConfig: AppConfigService,
+  ) {
+    this.s3 = new S3Client({
+      region: appConfig.s3Region,
+      endpoint: appConfig.s3Endpoint,
+      credentials: {
+        accessKeyId: appConfig.s3AccessKeyId,
+        secretAccessKey: appConfig.s3SecretAccessKey,
+      },
+      forcePathStyle: Boolean(appConfig.s3Endpoint),
+    });
+  }
 
   async onModuleInit() {
+    // Legacy local storage directory. We keep it so older rows with absolute
+    // paths (pre-migration) can still be served if they exist.
     await fs.mkdir(this.storageDir, { recursive: true });
   }
 
@@ -56,28 +78,38 @@ export class AvatarService {
 
     if (
       user.picture === googleUrl &&
-      user.cachedGoogleAvatarPath &&
-      (await this.fileExists(user.cachedGoogleAvatarPath))
+      user.cachedGoogleAvatarPath
     ) {
+      // If this is already an S3 key, assume it's present (avoid a HEAD call on every sign-in).
+      // If it looks like a legacy local path, keep the old fileExists behavior.
+      if (!this.isLocalPath(user.cachedGoogleAvatarPath)) return;
+      if (await this.fileExists(user.cachedGoogleAvatarPath)) return;
       return;
     }
 
     try {
       const { buffer, mime } = await this.downloadImage(googleUrl);
-      const filename = `${user.id}-google-${randomUUID()}${this.extForMime(mime)}`;
-      const dest = path.join(this.storageDir, filename);
-      await fs.writeFile(dest, buffer);
+      const ext = this.extForMime(mime).replace(/^\./, '');
+      const key = `avatars/google/${user.id}/${randomUUID()}.${ext}`;
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.appConfig.s3Bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: mime,
+        }),
+      );
 
       const oldPath = user.cachedGoogleAvatarPath;
 
       await this.userRepository.update(user.id, {
-        cachedGoogleAvatarPath: dest,
+        cachedGoogleAvatarPath: key,
         cachedGoogleAvatarMime: mime,
         avatarVersion: this.nextVersion(user.avatarVersion),
       });
 
-      if (oldPath && oldPath !== dest) {
-        await this.safeUnlink(oldPath);
+      if (oldPath && oldPath !== key) {
+        await this.safeDelete(oldPath);
       }
     } catch (error) {
       this.logger.warn(
@@ -105,21 +137,28 @@ export class AvatarService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    const filename = `${user.id}-custom-${randomUUID()}${this.extForMime(file.mimetype)}`;
-    const dest = path.join(this.storageDir, filename);
-    await fs.writeFile(dest, file.buffer);
+    const ext = this.extForMime(file.mimetype).replace(/^\./, '');
+    const key = `avatars/custom/${user.id}/${randomUUID()}.${ext}`;
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.appConfig.s3Bucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+      }),
+    );
 
     const oldPath = user.customAvatarPath;
 
     await this.userRepository.update(user.id, {
-      customAvatarPath: dest,
+      customAvatarPath: key,
       customAvatarMime: file.mimetype,
       useGoogleAvatar: false,
       avatarVersion: this.nextVersion(user.avatarVersion),
     });
 
-    if (oldPath && oldPath !== dest) {
-      await this.safeUnlink(oldPath);
+    if (oldPath && oldPath !== key) {
+      await this.safeDelete(oldPath);
     }
 
     const updated = await this.userRepository.findOne({ where: { id: userId } });
@@ -141,7 +180,7 @@ export class AvatarService {
     });
 
     if (oldPath) {
-      await this.safeUnlink(oldPath);
+      await this.safeDelete(oldPath);
     }
 
     const updated = await this.userRepository.findOne({ where: { id: userId } });
@@ -159,30 +198,45 @@ export class AvatarService {
     if (!user) return null;
 
     const useGoogle = user.useGoogleAvatar;
-    if (
-      !useGoogle &&
-      user.customAvatarPath &&
-      (await this.fileExists(user.customAvatarPath))
-    ) {
-      return {
-        path: user.customAvatarPath,
-        mime: user.customAvatarMime ?? 'image/jpeg',
-        stream: createReadStream(user.customAvatarPath),
-      };
+    if (!useGoogle && user.customAvatarPath) {
+      const mime = user.customAvatarMime ?? 'image/jpeg';
+      const bin = await this.resolveBinary(user.customAvatarPath, mime);
+      if (bin) return bin;
     }
 
-    if (
-      user.cachedGoogleAvatarPath &&
-      (await this.fileExists(user.cachedGoogleAvatarPath))
-    ) {
-      return {
-        path: user.cachedGoogleAvatarPath,
-        mime: user.cachedGoogleAvatarMime ?? 'image/jpeg',
-        stream: createReadStream(user.cachedGoogleAvatarPath),
-      };
+    if (user.cachedGoogleAvatarPath) {
+      const mime = user.cachedGoogleAvatarMime ?? 'image/jpeg';
+      const bin = await this.resolveBinary(user.cachedGoogleAvatarPath, mime);
+      if (bin) return bin;
     }
 
     return null;
+  }
+
+  private async resolveBinary(
+    keyOrPath: string,
+    mime: string,
+  ): Promise<AvatarBinary | null> {
+    if (this.isLocalPath(keyOrPath)) {
+      if (!(await this.fileExists(keyOrPath))) return null;
+      return { path: keyOrPath, mime, stream: createReadStream(keyOrPath) };
+    }
+    try {
+      const res = await this.s3.send(
+        new GetObjectCommand({
+          Bucket: this.appConfig.s3Bucket,
+          Key: keyOrPath,
+        }),
+      );
+      if (!res.Body) return null;
+      return {
+        path: keyOrPath,
+        mime,
+        stream: res.Body as unknown as Readable,
+      };
+    } catch {
+      return null;
+    }
   }
 
   private async downloadImage(url: string): Promise<{ buffer: Buffer; mime: string }> {
@@ -222,6 +276,10 @@ export class AvatarService {
     }
   }
 
+  private isLocalPath(p: string): boolean {
+    return path.isAbsolute(p);
+  }
+
   private async fileExists(p: string): Promise<boolean> {
     try {
       await fs.access(p);
@@ -231,12 +289,27 @@ export class AvatarService {
     }
   }
 
-  private async safeUnlink(p: string): Promise<void> {
+  private async safeDelete(keyOrPath: string): Promise<void> {
+    if (this.isLocalPath(keyOrPath)) {
+      try {
+        await fs.unlink(keyOrPath);
+      } catch (error) {
+        this.logger.debug(
+          `Failed to unlink old avatar ${keyOrPath}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      return;
+    }
     try {
-      await fs.unlink(p);
+      await this.s3.send(
+        new DeleteObjectCommand({
+          Bucket: this.appConfig.s3Bucket,
+          Key: keyOrPath,
+        }),
+      );
     } catch (error) {
       this.logger.debug(
-        `Failed to unlink old avatar ${p}: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to delete old avatar key ${keyOrPath}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

@@ -32,7 +32,12 @@ const wsValidationPipe = new ValidationPipe({
   transform: true,
 });
 
-@WebSocketGateway()
+@WebSocketGateway({
+  // Faster presence updates when a user closes their last tab.
+  // With these values peers should see offline within ~7–12 seconds.
+  pingInterval: 5000,
+  pingTimeout: 7000,
+})
 export class ChatGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {

@@ -7,12 +7,7 @@
 //     refresh + retry once before giving up.
 
 import { io, type Socket } from "socket.io-client";
-import {
-  API_BASE,
-  getAccessToken,
-  onTokensChange,
-  refreshTokens,
-} from "./api";
+import { API_BASE, getAccessToken, onTokensChange, refreshTokens } from "./api";
 import type {
   AuthTokens,
   ChatMessage,
@@ -33,6 +28,7 @@ let socket: Socket | null = null;
 let tokensUnsubscribe: (() => void) | null = null;
 let proactiveRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectingForAuth = false;
+let closeHandlersAttached = false;
 
 export interface BreezeServerEvents {
   newMessage: (msg: ChatMessage) => void;
@@ -120,6 +116,21 @@ export function getSocket(): Socket {
     autoConnect: true,
     withCredentials: true,
   });
+
+  // Ensure the server sees a disconnect when the tab is closed/navigated away.
+  // Without this, presence can remain "online" until Socket.IO ping timeouts fire.
+  if (typeof window !== "undefined" && !closeHandlersAttached) {
+    closeHandlersAttached = true;
+    const closeNow = () => {
+      try {
+        socket?.disconnect();
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("pagehide", closeNow);
+    window.addEventListener("beforeunload", closeNow);
+  }
 
   // Re-auth when tokens rotate (proactive refresh or api.ts auto-retry).
   tokensUnsubscribe?.();

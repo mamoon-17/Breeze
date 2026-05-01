@@ -14,6 +14,7 @@ import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { User } from '../user/user.entity';
 import { ChatMessage } from '../chat/chat-message.entity';
 import { MessageReceipt } from '../chat/message-receipt.entity';
+import { ChatMessageAttachment } from '../chat/chat-message-attachment.entity';
 import {
   ConversationInvitationService,
   HydratedInvitation,
@@ -50,6 +51,8 @@ export interface HydratedConversation {
     message: string;
     attachmentUrl?: string | null;
     attachmentType?: string | null;
+    attachmentsCount?: number;
+    firstAttachmentType?: string | null;
     sentAt: Date;
     createdAt: Date;
   } | null;
@@ -71,6 +74,8 @@ export class ConversationService {
     private readonly chatMessageRepository: Repository<ChatMessage>,
     @InjectRepository(MessageReceipt)
     private readonly receiptRepository: Repository<MessageReceipt>,
+    @InjectRepository(ChatMessageAttachment)
+    private readonly attachmentRepository: Repository<ChatMessageAttachment>,
     private readonly dataSource: DataSource,
     private readonly invitationService: ConversationInvitationService,
     private readonly socketState: SocketStateService,
@@ -398,6 +403,25 @@ export class ConversationService {
       lastMessages.map((m) => [m.room, m]),
     );
 
+    const lastIds = lastMessages.map((m) => m.id);
+    const attachmentCounts =
+      lastIds.length > 0
+        ? await this.attachmentRepository
+            .createQueryBuilder('a')
+            .select('a."messageId"', 'messageId')
+            .addSelect('COUNT(*)', 'count')
+            .addSelect('MIN(a."type")', 'firstType')
+            .where('a."messageId" IN (:...ids)', { ids: lastIds })
+            .groupBy('a."messageId"')
+            .getRawMany<{ messageId: string; count: string; firstType: string }>()
+        : [];
+    const attachmentByMessageId = new Map(
+      attachmentCounts.map((r) => [
+        r.messageId,
+        { count: Number(r.count) || 0, firstType: r.firstType ?? null },
+      ]),
+    );
+
     // Unread counts: how many messages in each conversation this user hasn't
     // read yet (receipts rows for the current user with readAt IS NULL).
     const unreadRows =
@@ -421,6 +445,12 @@ export class ConversationService {
     return conversations.map((c) => {
       const peer = peerByConversation.get(c.id);
       const last = lastMessageByConversation.get(c.id) ?? null;
+      const attachmentMeta = last ? attachmentByMessageId.get(last.id) : undefined;
+      const legacyCount = last?.attachmentType ? 1 : 0;
+      const legacyFirstType = last?.attachmentType ?? null;
+      const combinedCount = (attachmentMeta?.count ?? 0) + legacyCount;
+      const combinedFirstType =
+        legacyFirstType ?? attachmentMeta?.firstType ?? null;
       return {
         id: c.id,
         type: c.type,
@@ -443,6 +473,8 @@ export class ConversationService {
               message: last.message,
               attachmentUrl: last.attachmentUrl ?? null,
               attachmentType: last.attachmentType ?? null,
+              attachmentsCount: combinedCount,
+              firstAttachmentType: combinedFirstType,
               sentAt: last.sentAt,
               createdAt: last.createdAt,
             }

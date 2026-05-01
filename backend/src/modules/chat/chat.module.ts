@@ -10,6 +10,7 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './chat-message.entity';
 import { MessageReceipt } from './message-receipt.entity';
+import { ChatMessageAttachment } from './chat-message-attachment.entity';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -20,7 +21,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     UserModule,
     NotificationsModule,
     forwardRef(() => ConversationModule),
-    TypeOrmModule.forFeature([ChatMessage, MessageReceipt]),
+    TypeOrmModule.forFeature([ChatMessage, MessageReceipt, ChatMessageAttachment]),
     JwtModule.registerAsync({
       imports: [AppConfigModule],
       inject: [AppConfigService],

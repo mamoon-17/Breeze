@@ -19,6 +19,7 @@ let refreshToken: string | null =
   typeof window !== "undefined" ? localStorage.getItem(REFRESH_KEY) : null;
 let refreshPromise: Promise<AuthTokens | null> | null = null;
 const tokenListeners = new Set<(t: AuthTokens | null) => void>();
+let tokensSnapshot: AuthTokens | null = null;
 
 export const API_BASE: string =
   ((import.meta as unknown as { env?: Record<string, string> }).env
@@ -35,6 +36,7 @@ export function getRefreshToken(): string | null {
 export function setTokens(tokens: AuthTokens | null) {
   accessToken = tokens?.accessToken ?? null;
   refreshToken = tokens?.refreshToken ?? null;
+  tokensSnapshot = tokens;
   if (typeof window !== "undefined") {
     if (refreshToken) localStorage.setItem(REFRESH_KEY, refreshToken);
     else localStorage.removeItem(REFRESH_KEY);
@@ -44,6 +46,9 @@ export function setTokens(tokens: AuthTokens | null) {
 
 export function onTokensChange(cb: (t: AuthTokens | null) => void) {
   tokenListeners.add(cb);
+  // Fire immediately so callers (e.g. socket layer) can schedule proactive refresh
+  // for the *current* session, not only after the next rotation.
+  cb(tokensSnapshot);
   return () => tokenListeners.delete(cb);
 }
 
@@ -245,6 +250,34 @@ export const Upload = {
       contentType: string;
       size: number;
     }>("/upload/audio", {
+      method: "POST",
+      body: form,
+    });
+  },
+  attachments: async (
+    files: File[],
+  ): Promise<{
+    attachments: {
+      key: string;
+      url: string;
+      type: "image" | "video" | "audio" | "file";
+      mime: string;
+      size: number;
+      filename?: string;
+    }[];
+  }> => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    return api<{
+      attachments: {
+        key: string;
+        url: string;
+        type: "image" | "video" | "audio" | "file";
+        mime: string;
+        size: number;
+        filename?: string;
+      }[];
+    }>("/upload/attachments", {
       method: "POST",
       body: form,
     });

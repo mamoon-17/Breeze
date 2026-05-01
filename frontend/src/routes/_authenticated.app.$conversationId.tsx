@@ -50,6 +50,7 @@ function ConversationView() {
   const [readReceipts, setReadReceipts] = useState<Record<string, string>>({});
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
   const [uploadingAudio, setUploadingAudio] = useState(false);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   // userId → display name of people currently typing in this convo
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const lastReadSentRef = useRef<string | null>(null);
@@ -365,6 +366,53 @@ function ConversationView() {
     }
   };
 
+  const handleSendAttachments = async (files: File[]) => {
+    if (!user?.id) return;
+    if (!conversationId) return;
+    if (!files || files.length === 0) return;
+    try {
+      setUploadingAttachments(true);
+      const { attachments } = await Upload.attachments(files);
+      const nowIso = new Date().toISOString();
+      const optimistic: ChatMessage = {
+        id: `local:${globalThis.crypto?.randomUUID?.() ?? String(Date.now())}`,
+        room: conversationId,
+        senderId: user.id,
+        message: "",
+        sentAt: nowIso,
+        createdAt: nowIso,
+        receipts: [],
+        optimistic: true,
+        attachments: attachments.map((a, idx) => ({
+          id: `localatt:${idx}`,
+          messageId: "local",
+          type: a.type,
+          key: a.key,
+          url: a.url,
+          mime: a.mime,
+          size: String(a.size),
+          filename: a.filename ?? null,
+          createdAt: nowIso,
+        })),
+      };
+      setMessages((prev) => [...prev, optimistic]);
+      wsSendMessage(conversationId, {
+        attachments: attachments.map((a) => ({
+          key: a.key,
+          type: a.type,
+          mime: a.mime,
+          size: a.size,
+          filename: a.filename,
+        })),
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Couldn't upload attachments");
+    } finally {
+      setUploadingAttachments(false);
+    }
+  };
+
   return (
     <div className="flex h-full overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -423,8 +471,10 @@ function ConversationView() {
         <ChatComposer
           onSend={handleSend}
           onSendAudio={handleSendAudio}
+          onSendAttachments={handleSendAttachments}
+          uploadingAttachments={uploadingAttachments}
           conversationId={conversationId}
-          disabled={uploadingAudio}
+          disabled={uploadingAudio || uploadingAttachments}
         />
       </div>
 

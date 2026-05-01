@@ -63,6 +63,14 @@ export function ConversationList({
           const last = c.lastMessage;
           if (!last) return "";
           if (last.attachmentType === "audio") return "Voice message";
+          if ((last.attachmentsCount ?? 0) > 0) {
+            const n = last.attachmentsCount ?? 0;
+            const t = last.firstAttachmentType;
+            if (t === "image") return n > 1 ? `${n} photos` : "Photo";
+            if (t === "video") return n > 1 ? `${n} videos` : "Video";
+            if (t === "audio") return n > 1 ? `${n} voice messages` : "Voice message";
+            return n > 1 ? `${n} attachments` : "Attachment";
+          }
           return last.message ?? "";
         })();
         const unreadCount = c.unreadCount ?? 0;

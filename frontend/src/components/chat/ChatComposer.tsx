@@ -6,6 +6,8 @@ import { emitTyping, emitStopTyping } from "@/lib/breeze/socket";
 interface Props {
   onSend: (text: string) => void;
   onSendAudio?: (blob: Blob) => void;
+  onSendAttachments?: (files: File[]) => void;
+  uploadingAttachments?: boolean;
   conversationId?: string;
   disabled?: boolean;
 }
@@ -15,6 +17,8 @@ const TYPING_THROTTLE_MS = 2000;
 export function ChatComposer({
   onSend,
   onSendAudio,
+  onSendAttachments,
+  uploadingAttachments,
   conversationId,
   disabled,
 }: Props) {
@@ -27,6 +31,7 @@ export function ChatComposer({
   const chunksRef = useRef<BlobPart[]>([]);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordStartedAtRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     return () => {
@@ -40,6 +45,17 @@ export function ChatComposer({
       recorderRef.current = null;
     };
   }, []);
+
+  const openFilePicker = () => {
+    if (disabled) return;
+    fileInputRef.current?.click();
+  };
+
+  const onPickFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    onSendAttachments?.(Array.from(files));
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const clearTypingTimer = () => {
     if (typingTimerRef.current) {
@@ -148,21 +164,38 @@ export function ChatComposer({
 
   return (
     <div className="shrink-0 px-6 pb-6 md:px-8">
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        accept="image/*,video/*,application/pdf"
+        onChange={(e) => onPickFiles(e.target.files)}
+      />
       <div className="flex items-end gap-2 rounded-2xl border border-linen-200 bg-card p-2 shadow-soft">
         <button
           aria-label="Attach"
+          type="button"
+          onClick={openFilePicker}
           className="flex size-10 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition hover:bg-linen-100"
         >
-          <svg
-            viewBox="0 0 24 24"
-            className="size-4"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+          {uploadingAttachments ? (
+            <span
+              className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+              aria-label="Uploading"
+            />
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              className="size-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          )}
         </button>
         <button
           aria-label="Emoji"

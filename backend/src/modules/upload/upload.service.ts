@@ -10,6 +10,15 @@ export interface UploadedAudio {
   size: number;
 }
 
+export interface UploadedAttachment {
+  key: string;
+  url: string;
+  type: 'image' | 'video' | 'audio' | 'file';
+  mime: string;
+  size: number;
+  filename?: string;
+}
+
 @Injectable()
 export class UploadService {
   private readonly s3: S3Client;
@@ -76,6 +85,76 @@ export class UploadService {
       { expiresIn: 60 * 60 * 24 * 7 },
     );
     return { url, contentType, size: file.size };
+  }
+
+  async uploadAttachments(
+    userId: string,
+    files: { buffer: Buffer; mimetype: string; size: number; originalname?: string }[],
+  ): Promise<UploadedAttachment[]> {
+    const out: UploadedAttachment[] = [];
+    for (const f of files) {
+      out.push(await this.uploadOneAttachment(userId, f));
+    }
+    return out;
+  }
+
+  private async uploadOneAttachment(
+    userId: string,
+    file: { buffer: Buffer; mimetype: string; size: number; originalname?: string },
+  ): Promise<UploadedAttachment> {
+    if (!file?.buffer || file.size === 0) {
+      throw new BadRequestException('Empty upload');
+    }
+    const mime = (file.mimetype || 'application/octet-stream').toLowerCase();
+    const type: UploadedAttachment['type'] =
+      mime.startsWith('image/')
+        ? 'image'
+        : mime.startsWith('video/')
+          ? 'video'
+          : mime.startsWith('audio/')
+            ? 'audio'
+            : 'file';
+
+    const safeName = (file.originalname ?? '').trim().slice(0, 200);
+    const ext = this.safeExtFromName(file.originalname);
+    const key = `attachments/${userId}/${randomUUID()}${ext ? `.${ext}` : ''}`;
+
+    try {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket: this.appConfig.s3Bucket,
+          Key: key,
+          Body: file.buffer,
+          ContentType: mime,
+        }),
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err && 'name' in err
+            ? String((err as { name: unknown }).name)
+            : String(err);
+      throw new BadRequestException(`S3 upload failed: ${msg}`);
+    }
+
+    const url = await getSignedUrl(
+      this.s3,
+      new GetObjectCommand({
+        Bucket: this.appConfig.s3Bucket,
+        Key: key,
+      }),
+      { expiresIn: 60 * 60 * 24 * 7 },
+    );
+
+    return {
+      key,
+      url,
+      type,
+      mime,
+      size: file.size,
+      filename: safeName || undefined,
+    };
   }
 
   private extForMime(mime: string): string | undefined {
