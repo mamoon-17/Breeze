@@ -25,6 +25,12 @@ export class ChatMessage {
   @Column({ type: 'text' })
   message: string;
 
+  @Column({ type: 'text', nullable: true })
+  attachmentUrl?: string | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  attachmentType?: string | null;
+
   /** Server accepted and stored the message (single tick / “sent”). Mirrors persist time. */
   @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   sentAt: Date;

@@ -1,6 +1,6 @@
 import { createFileRoute, useParams } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Conversations } from "@/lib/breeze/api";
+import { Conversations, Upload } from "@/lib/breeze/api";
 import type {
   ChatMessage,
   Conversation,
@@ -49,6 +49,7 @@ function ConversationView() {
   const [loading, setLoading] = useState(true);
   const [readReceipts, setReadReceipts] = useState<Record<string, string>>({});
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
+  const [uploadingAudio, setUploadingAudio] = useState(false);
   // userId → display name of people currently typing in this convo
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const lastReadSentRef = useRef<string | null>(null);
@@ -264,6 +265,9 @@ function ConversationView() {
 
   useEffect(() => {
     if (!user || messages.length === 0) return;
+    // Don't mark messages as read while the tab is in the background.
+    // This keeps "Seen" meaningful and allows web push / notifications to matter.
+    if (typeof document !== "undefined" && document.hidden) return;
     const lastIncoming = [...messages]
       .reverse()
       .find((m) => m.senderId !== user.id);
@@ -326,7 +330,39 @@ function ConversationView() {
       optimistic: true,
     };
     setMessages((prev) => [...prev, optimistic]);
-    wsSendMessage(conversationId, trimmed);
+    wsSendMessage(conversationId, { message: trimmed });
+  };
+
+  const handleSendAudio = async (blob: Blob) => {
+    if (!user?.id) return;
+    if (!conversationId) return;
+    try {
+      setUploadingAudio(true);
+      const uploaded = await Upload.audio(blob);
+      const nowIso = new Date().toISOString();
+      const optimistic: ChatMessage = {
+        id: `local:${globalThis.crypto?.randomUUID?.() ?? String(Date.now())}`,
+        room: conversationId,
+        senderId: user.id,
+        message: "",
+        attachmentUrl: uploaded.attachmentUrl,
+        attachmentType: uploaded.attachmentType,
+        sentAt: nowIso,
+        createdAt: nowIso,
+        receipts: [],
+        optimistic: true,
+      };
+      setMessages((prev) => [...prev, optimistic]);
+      wsSendMessage(conversationId, {
+        attachmentUrl: uploaded.attachmentUrl,
+        attachmentType: uploaded.attachmentType,
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Couldn't upload voice message");
+    } finally {
+      setUploadingAudio(false);
+    }
   };
 
   return (
@@ -384,7 +420,12 @@ function ConversationView() {
           onDelete={handleDelete}
         />
 
-        <ChatComposer onSend={handleSend} conversationId={conversationId} />
+        <ChatComposer
+          onSend={handleSend}
+          onSendAudio={handleSendAudio}
+          conversationId={conversationId}
+          disabled={uploadingAudio}
+        />
       </div>
 
       <AssistPanel

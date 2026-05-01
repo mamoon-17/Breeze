@@ -229,11 +229,54 @@ export class AppConfigService {
   }
 
   get redisPassword(): string | undefined {
-    return this.configService.get<string>('REDIS_PASSWORD');
+    const v = this.configService.get<string>('REDIS_PASSWORD')?.trim();
+    return v ? v : undefined;
   }
 
   get redisDb(): number {
     return Number(this.configService.get<string>('REDIS_DB')) || 0;
+  }
+
+  get s3Bucket(): string {
+    const value = this.getRequired('S3_BUCKET');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
+  get s3Region(): string {
+    return this.configService.get<string>('S3_REGION') ?? 'us-east-1';
+  }
+
+  get s3AccessKeyId(): string {
+    const value = this.getRequired('S3_ACCESS_KEY_ID');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
+  get s3SecretAccessKey(): string {
+    const value = this.getRequired('S3_SECRET_ACCESS_KEY');
+    if (value.isErr()) throw new Error(value.error.message);
+    return value.value;
+  }
+
+  /** Optional override for non-AWS S3-compatible stores (e.g. MinIO). */
+  get s3Endpoint(): string | undefined {
+    const v = this.configService.get<string>('S3_ENDPOINT')?.trim();
+    return v ? v : undefined;
+  }
+
+  /**
+   * Public base URL for objects (e.g. CloudFront). If unset, falls back to the
+   * standard AWS virtual-hosted-style URL.
+   */
+  get s3PublicBaseUrl(): string {
+    const v = this.configService.get<string>('S3_PUBLIC_BASE_URL')?.trim();
+    if (v) return v.replace(/\/+$/, '');
+    const region = this.s3Region;
+    const bucket = this.s3Bucket;
+    return region === 'us-east-1'
+      ? `https://${bucket}.s3.amazonaws.com`
+      : `https://${bucket}.s3.${region}.amazonaws.com`;
   }
 
   /**

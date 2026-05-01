@@ -226,6 +226,31 @@ export const Profile = {
     api<{ user: BreezeUser }>("/user/me/avatar", { method: "DELETE" }),
 };
 
+export const Upload = {
+  audio: async (blob: Blob): Promise<{
+    attachmentUrl: string;
+    attachmentType: "audio";
+    contentType: string;
+    size: number;
+  }> => {
+    const form = new FormData();
+    const file =
+      blob instanceof File
+        ? blob
+        : new File([blob], "voice-message.webm", { type: blob.type || "audio/webm" });
+    form.append("audio", file);
+    return api<{
+      attachmentUrl: string;
+      attachmentType: "audio";
+      contentType: string;
+      size: number;
+    }>("/upload/audio", {
+      method: "POST",
+      body: form,
+    });
+  },
+};
+
 /**
  * Compose a full URL for a user's avatar endpoint. Returns `null` when the
  * supplied user has no avatar at all (backend gave us `null`), letting the

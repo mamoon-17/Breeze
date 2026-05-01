@@ -245,6 +245,35 @@ function AppShell() {
               }),
           },
         });
+
+        // Foreground notification: when the browser is open but this tab isn't active,
+        // surface a system notification (SW click handler will deep-link).
+        if (
+          typeof document !== "undefined" &&
+          document.hidden &&
+          isPushSupported() &&
+          Notification.permission === "granted"
+        ) {
+          void navigator.serviceWorker
+            .getRegistration("/")
+            .then((reg) => {
+              if (!reg) return;
+              const body =
+                typeof msg.message === "string" && msg.message.trim()
+                  ? msg.message
+                  : "You have a new message";
+              return reg.showNotification("New message", {
+                body,
+                tag: `breeze-room-${msg.room}`,
+                icon: "/favicon.svg",
+                badge: "/favicon.svg",
+                data: { url: `/app/${msg.room}`, room: msg.room },
+              });
+            })
+            .catch(() => {
+              // ignore
+            });
+        }
       }
     };
 

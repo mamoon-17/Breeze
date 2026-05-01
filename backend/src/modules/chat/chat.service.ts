@@ -41,7 +41,9 @@ export class ChatService {
       const msg = manager.create(ChatMessage, {
         room: dto.room,
         senderId,
-        message: dto.message,
+        message: dto.message ?? '',
+        attachmentUrl: dto.attachmentUrl ?? null,
+        attachmentType: dto.attachmentType ?? null,
         sentAt: now,
       });
       const message = await manager.save(msg);

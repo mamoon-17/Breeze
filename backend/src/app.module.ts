@@ -14,6 +14,7 @@ import { SocketModule } from './modules/socket/socket.module';
 import { ConversationModule } from './modules/conversation/conversation.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { UploadModule } from './modules/upload/upload.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     ConversationModule,
     ChatModule,
     NotificationsModule,
+    UploadModule,
     AuthModule,
     UserModule,
   ],

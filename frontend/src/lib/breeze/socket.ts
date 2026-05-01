@@ -174,8 +174,11 @@ export function joinRoom(conversationId: string) {
   getSocket().emit("joinRoom", conversationId);
 }
 
-export function sendMessage(room: string, message: string) {
-  getSocket().emit("sendMessage", { room, message });
+export function sendMessage(
+  room: string,
+  payload: { message?: string; attachmentUrl?: string; attachmentType?: "audio" },
+) {
+  getSocket().emit("sendMessage", { room, ...payload });
 }
 
 export function deleteMessage(room: string, messageId: string) {

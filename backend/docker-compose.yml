@@ -1,0 +1,16 @@
+name: breeze
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: breeze-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - breeze-redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+volumes:
+  breeze-redis-data:
+

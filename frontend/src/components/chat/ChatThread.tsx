@@ -228,7 +228,19 @@ function Bubble({
                 : "rounded-3xl rounded-tl-md border border-linen-100 bg-card text-foreground",
             ].join(" ")}
           >
-            {message.message}
+            {message.attachmentType === "audio" && message.attachmentUrl ? (
+              <div className="flex flex-col gap-2">
+                <audio
+                  controls
+                  preload="metadata"
+                  src={message.attachmentUrl}
+                  className="w-64 max-w-full"
+                />
+                {message.message ? <div>{message.message}</div> : null}
+              </div>
+            ) : (
+              message.message
+            )}
           </div>
         )}
       </div>

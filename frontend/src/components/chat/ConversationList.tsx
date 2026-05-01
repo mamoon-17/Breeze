@@ -58,7 +58,13 @@ export function ConversationList({
             : (c.peer?.displayName ?? c.peer?.email ?? "Direct message");
         const initial = title.charAt(0).toUpperCase();
         const isTyping = typingConvoIds?.has(c.id) ?? false;
-        const lastMsg = isTyping ? "" : (c.lastMessage?.message ?? "");
+        const lastMsg = (() => {
+          if (isTyping) return "";
+          const last = c.lastMessage;
+          if (!last) return "";
+          if (last.attachmentType === "audio") return "Voice message";
+          return last.message ?? "";
+        })();
         const unreadCount = c.unreadCount ?? 0;
         const timestamp = formatTime(c.lastMessage?.sentAt ?? c.createdAt);
 

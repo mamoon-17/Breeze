@@ -72,6 +72,8 @@ export interface ChatMessage {
   room: string;
   senderId: string;
   message: string;
+  attachmentUrl?: string | null;
+  attachmentType?: "audio" | string | null;
   sentAt: string;
   createdAt: string;
   deletedAt?: string | null;

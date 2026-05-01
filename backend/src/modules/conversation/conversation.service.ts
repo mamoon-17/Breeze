@@ -48,6 +48,8 @@ export interface HydratedConversation {
     room: string;
     senderId: string;
     message: string;
+    attachmentUrl?: string | null;
+    attachmentType?: string | null;
     sentAt: Date;
     createdAt: Date;
   } | null;
@@ -439,6 +441,8 @@ export class ConversationService {
               room: last.room,
               senderId: last.senderId,
               message: last.message,
+              attachmentUrl: last.attachmentUrl ?? null,
+              attachmentType: last.attachmentType ?? null,
               sentAt: last.sentAt,
               createdAt: last.createdAt,
             }
