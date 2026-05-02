@@ -393,3 +393,16 @@ export const Notifications = {
       body: { endpoint },
     }),
 };
+
+export const Ai = {
+  enhance: (originalText: string, moodKey: string, conversationId?: string) =>
+    api<{ enhancedText: string }>("/ai/enhance", {
+      method: "POST",
+      body: { originalText, moodKey, conversationId },
+    }),
+  chat: (messages: { role: string; content: string }[]) =>
+    api<{ reply: string }>("/ai/chat", {
+      method: "POST",
+      body: { messages },
+    }),
+};

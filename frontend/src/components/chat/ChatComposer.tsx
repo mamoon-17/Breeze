@@ -10,6 +10,10 @@ interface Props {
   uploadingAttachments?: boolean;
   conversationId?: string;
   disabled?: boolean;
+  /** When provided, the composer uses this external value instead of local state */
+  externalValue?: string;
+  /** Called when the composer text changes (used with externalValue) */
+  onExternalChange?: (text: string) => void;
 }
 
 const TYPING_THROTTLE_MS = 2000;
@@ -21,8 +25,12 @@ export function ChatComposer({
   uploadingAttachments,
   conversationId,
   disabled,
+  externalValue,
+  onExternalChange,
 }: Props) {
-  const [value, setValue] = useState("");
+  const [localValue, setLocalValue] = useState("");
+  const value = externalValue !== undefined ? externalValue : localValue;
+  const setValueFn = onExternalChange ?? setLocalValue;
   const typingRef = useRef(false);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [recording, setRecording] = useState(false);
@@ -72,7 +80,7 @@ export function ChatComposer({
   };
 
   const handleChange = (text: string) => {
-    setValue(text);
+    setValueFn(text);
     if (!conversationId) return;
 
     if (text.trim()) {
@@ -96,7 +104,7 @@ export function ChatComposer({
     if (!trimmed || disabled) return;
     stopTyping();
     onSend(trimmed);
-    setValue("");
+    setValueFn("");
   };
 
   const toggleRecord = async () => {
