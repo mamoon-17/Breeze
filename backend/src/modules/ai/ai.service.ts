@@ -1,5 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, IsNull, Repository } from 'typeorm';
 import OpenAI from 'openai';
+import { ChatMessage } from '../chat/chat-message.entity';
+import { User } from '../user/user.entity';
+import { ConversationService } from '../conversation/conversation.service';
+import { effectiveDisplayName } from '../user/user-projection';
+import { summarySystemPrompt } from './prompts/summary.prompts';
+import { SummaryResult } from './dto/summarise-chat.dto';
 
 @Injectable()
 export class AiService {
@@ -7,7 +20,13 @@ export class AiService {
   private readonly client: OpenAI;
   private readonly model: string;
 
-  constructor() {
+  constructor(
+    @InjectRepository(ChatMessage)
+    private readonly chatMessageRepository: Repository<ChatMessage>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    private readonly conversationService: ConversationService,
+  ) {
     const apiKey = process.env.GITHUB_MODEL_KEY;
     if (!apiKey) {
       this.logger.warn(
@@ -55,5 +74,58 @@ export class AiService {
     });
 
     return response.choices[0]?.message?.content?.trim() ?? '';
+  }
+
+  /**
+   * Summarises the last N messages of a conversation.
+   * Verifies the requesting user is a member before fetching.
+   */
+  async summariseChat(
+    conversationId: string,
+    messageLimit = 20,
+    userId: string,
+  ): Promise<SummaryResult> {
+    // Gate: requester must be a member of the conversation
+    await this.conversationService.requireMember(userId, conversationId);
+
+    // Fetch last N non-deleted messages, newest-first
+    const messages = await this.chatMessageRepository.find({
+      where: { room: conversationId, deletedAt: IsNull() },
+      order: { createdAt: 'DESC' },
+      take: messageLimit,
+    });
+
+    // Reverse to oldest-first for the transcript
+    const sorted = [...messages].reverse();
+
+    // Resolve sender display names in one query
+    const senderIds = [...new Set(sorted.map((m) => m.senderId))];
+    const users =
+      senderIds.length > 0
+        ? await this.userRepository.find({ where: { id: In(senderIds) } })
+        : [];
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    // Build plain-text transcript: "[ISO] SenderName: message"
+    const transcript = sorted
+      .map((m) => {
+        const u = userById.get(m.senderId);
+        const name = u ? effectiveDisplayName(u) : m.senderId;
+        return `[${m.createdAt.toISOString()}] ${name}: ${m.message}`;
+      })
+      .join('\n');
+
+    // Call the LLM
+    const raw = await this.complete(summarySystemPrompt, transcript);
+
+    // Parse and validate JSON
+    try {
+      return JSON.parse(raw) as SummaryResult;
+    } catch {
+      this.logger.error('AI summary parse error — raw response:', raw);
+      throw new InternalServerErrorException(
+        'AI returned invalid summary format',
+      );
+    }
   }
 }

@@ -394,6 +394,13 @@ export const Notifications = {
     }),
 };
 
+export interface SummaryResult {
+  summary: string;
+  bulletPoints: string[];
+  participants: string[];
+  dateRange: { from: string; to: string };
+}
+
 export const Ai = {
   enhance: (originalText: string, moodKey: string, conversationId?: string) =>
     api<{ enhancedText: string }>("/ai/enhance", {
@@ -404,5 +411,10 @@ export const Ai = {
     api<{ reply: string }>("/ai/chat", {
       method: "POST",
       body: { messages },
+    }),
+  summarise: (conversationId: string, messageLimit?: number) =>
+    api<SummaryResult>("/ai/summarise", {
+      method: "POST",
+      body: { conversationId, messageLimit },
     }),
 };

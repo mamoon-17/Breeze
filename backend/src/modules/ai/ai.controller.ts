@@ -13,6 +13,8 @@ import { AiService } from './ai.service';
 import { EnhanceMessageDto } from './dto/enhance-message.dto';
 import { AiChatDto } from './dto/chat-message.dto';
 import { moodSystemPrompt } from './prompts/mood.prompts';
+import { SummariseChatDto } from './dto/summarise-chat.dto';
+import type { SummaryResult } from './dto/summarise-chat.dto';
 
 const BREEZE_ASSISTANT_SYSTEM = `You are Breeze Assistant, a helpful AI inside a chat app. You help users rephrase messages, suggest replies, and improve their communication. Be concise.`;
 
@@ -73,5 +75,21 @@ export class AiController {
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
+  }
+
+  @Post('summarise')
+  @UseGuards(JwtAuthGuard)
+  async summarise(
+    @Body() dto: SummariseChatDto,
+    @Request() req: { user: { id: string } },
+  ): Promise<SummaryResult> {
+    this.logger.log(
+      `User ${req.user.id} summarising conversation ${dto.conversationId} (limit: ${dto.messageLimit ?? 20})`,
+    );
+    return this.aiService.summariseChat(
+      dto.conversationId,
+      dto.messageLimit,
+      req.user.id,
+    );
   }
 }

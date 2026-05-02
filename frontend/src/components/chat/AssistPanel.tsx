@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Ai } from "@/lib/breeze/api";
+import type { SummaryResult } from "@/lib/breeze/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,25 @@ interface Props {
   conversationId?: string;
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatDateReadable(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+const LIMIT_OPTIONS: { label: string; value: number }[] = [
+  { label: "Last 10 messages", value: 10 },
+  { label: "Last 20 messages", value: 20 },
+  { label: "Last 30 messages", value: 30 },
+];
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function AssistPanel({
@@ -103,8 +123,13 @@ export function AssistPanel({
   const [moodError, setMoodError] = useState<string | null>(null);
   const restoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Summarize (placeholder) ──
-  const [summary, setSummary] = useState<string | null>(null);
+  // ── Summarize state ──
+  const [summarizeOpen, setSummarizeOpen] = useState(false);
+  const [summarizeLimit, setSummarizeLimit] = useState(20);
+  const [summarizeLoading, setSummarizeLoading] = useState(false);
+  const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const summarizeContainerRef = useRef<HTMLDivElement>(null);
 
   // ── AI Chat state ──
   const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
@@ -123,6 +148,21 @@ export function AssistPanel({
       if (restoreTimerRef.current) clearTimeout(restoreTimerRef.current);
     };
   }, []);
+
+  // Click-outside handler: close summarize dropdown
+  useEffect(() => {
+    if (!summarizeOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        summarizeContainerRef.current &&
+        !summarizeContainerRef.current.contains(e.target as Node)
+      ) {
+        setSummarizeOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [summarizeOpen]);
 
   // ── Mood enhance handler ──
   const handleMoodClick = useCallback(
@@ -169,6 +209,23 @@ export function AssistPanel({
     }
   };
 
+  // ── Summarize handler ──
+  const handleSummarizeOptionClick = async (limit: number) => {
+    setSummarizeLimit(limit);
+    setSummarizeOpen(false);
+    setSummaryError(null);
+    setSummarizeLoading(true);
+    try {
+      const result = await Ai.summarise(conversationId!, limit);
+      setSummaryResult(result);
+    } catch (err) {
+      console.error(err);
+      setSummaryError("Could not summarise. Try again.");
+    } finally {
+      setSummarizeLoading(false);
+    }
+  };
+
   // ── AI Chat handler ──
   const handleChatSend = async () => {
     const text = chatInput.trim();
@@ -200,16 +257,6 @@ export function AssistPanel({
     } finally {
       setChatLoading(false);
     }
-  };
-
-  const fakeSummarize = () => {
-    if (messageCount === 0) {
-      toast("Nothing to summarize yet.");
-      return;
-    }
-    setSummary(
-      `${conversationTitle} · ${messageCount} message${messageCount === 1 ? "" : "s"} so far. The thread is about to evolve — connect the agent endpoint to enable real summarization.`,
-    );
   };
 
   return (
@@ -294,18 +341,118 @@ export function AssistPanel({
           </div>
 
           {/* ── SUMMARIZE + ACTIONS ── */}
-          <div className="space-y-2">
-            {summary && (
-              <p className="rounded-2xl border border-linen-200 bg-card/80 p-3 text-xs italic leading-relaxed text-muted-foreground animate-in fade-in duration-300">
-                {summary}
+          <div className="space-y-2" ref={summarizeContainerRef}>
+            {/* Summarize button — toggles dropdown */}
+            <button
+              id="summarize-thread-btn"
+              onClick={() => {
+                if (!summarizeLoading) setSummarizeOpen((o) => !o);
+              }}
+              disabled={summarizeLoading || !conversationId}
+              className="w-full rounded-xl border border-linen-200 bg-card px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-foreground transition hover:bg-linen-50 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {summarizeLoading ? (
+                <>
+                  <span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  Summarising…
+                </>
+              ) : (
+                "Summarize thread"
+              )}
+            </button>
+
+            {/* Inline dropdown — appears below the button in normal flow */}
+            {summarizeOpen && !summarizeLoading && (
+              <div className="rounded-xl border border-linen-200 bg-card overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                {LIMIT_OPTIONS.map((opt) => {
+                  const isDefault = opt.value === 20;
+                  const isSelected = opt.value === summarizeLimit;
+                  return (
+                    <button
+                      key={opt.value}
+                      id={`summarize-limit-${opt.value}`}
+                      onClick={() => void handleSummarizeOptionClick(opt.value)}
+                      disabled={summarizeLoading}
+                      className={`w-full px-4 py-2.5 text-left text-xs transition hover:bg-linen-50 disabled:opacity-50 ${
+                        isSelected || isDefault
+                          ? "font-semibold text-foreground"
+                          : "font-medium text-muted-foreground"
+                      } ${isSelected ? "bg-linen-100/70" : ""}`}
+                    >
+                      {opt.label}
+                      {isDefault && !isSelected && (
+                        <span className="ml-2 text-[9px] uppercase tracking-wider text-muted-foreground">
+                          default
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Inline error */}
+            {summaryError && (
+              <p className="text-[11px] text-red-500 animate-in fade-in duration-200">
+                {summaryError}
               </p>
             )}
-            <button
-              onClick={fakeSummarize}
-              className="w-full rounded-xl border border-linen-200 bg-card px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-foreground transition hover:bg-linen-50"
-            >
-              Summarize thread
-            </button>
+
+            {/* Summary result card */}
+            {summaryResult && (
+              <div className="rounded-2xl border border-linen-200 bg-card/80 p-3 space-y-2 animate-in fade-in duration-300">
+                {/* Dismiss */}
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs leading-relaxed text-foreground flex-1">
+                    {summaryResult.summary}
+                  </p>
+                  <button
+                    onClick={() => setSummaryResult(null)}
+                    className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground transition"
+                    aria-label="Dismiss summary"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Bullet points */}
+                {summaryResult.bulletPoints.length > 0 ? (
+                  <ul className="space-y-1">
+                    {summaryResult.bulletPoints.map((pt, i) => (
+                      <li
+                        key={i}
+                        className="flex gap-1.5 text-[11px] leading-relaxed text-muted-foreground"
+                      >
+                        <span className="shrink-0 text-foreground/60">•</span>
+                        <span>{pt}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] italic text-muted-foreground">
+                    No messages to summarise yet.
+                  </p>
+                )}
+
+                {/* Participants */}
+                {summaryResult.participants.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    <span className="font-medium text-foreground/70">Participants: </span>
+                    {summaryResult.participants.join(", ")}
+                  </p>
+                )}
+
+                {/* Date range */}
+                {summaryResult.dateRange?.from && summaryResult.dateRange?.to && (
+                  <p className="text-[10px] text-muted-foreground">
+                    <span className="font-medium text-foreground/70">Date range: </span>
+                    {formatDateReadable(summaryResult.dateRange.from)}
+                    {" → "}
+                    {formatDateReadable(summaryResult.dateRange.to)}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── AI CHAT ── */}
