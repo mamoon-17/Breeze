@@ -241,10 +241,7 @@ export function AssistPanel({
       const { reply } = await Ai.chat(
         newMessages.map((m) => ({ role: m.role, content: m.content })),
       );
-      setChatMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: reply },
-      ]);
+      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (err) {
       console.error(err);
       setChatMessages((prev) => [
@@ -269,7 +266,7 @@ export function AssistPanel({
             <div className="flex items-center gap-2">
               <span className="size-1.5 animate-pulse rounded-full bg-breeze" />
               <h4 className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Gentle Assist
+                ZEN MODE
               </h4>
               <span className="ml-auto rounded-full bg-gradient-to-r from-breeze/20 to-violet-500/20 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
                 AI
@@ -306,9 +303,7 @@ export function AssistPanel({
                       className={`absolute inset-0 rounded-xl bg-gradient-to-r ${mood.gradient} opacity-0 transition-opacity duration-200 group-hover:opacity-10`}
                     />
                     <span className="relative text-sm">{mood.emoji}</span>
-                    <span className="relative text-foreground">
-                      {mood.label}
-                    </span>
+                    <span className="relative text-foreground">{mood.label}</span>
                     {isLoading && (
                       <span className="relative ml-auto size-3.5 animate-spin rounded-full border-2 border-current border-t-transparent text-breeze" />
                     )}
@@ -357,7 +352,7 @@ export function AssistPanel({
                   Summarising…
                 </>
               ) : (
-                "Summarize thread"
+                "SUMMARIZE WITH ZEN AI"
               )}
             </button>
 
@@ -538,16 +533,6 @@ export function AssistPanel({
               </button>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* ── ZEN MODE (bottom, kept as-is) ── */}
-      <div className="border-t border-linen-200 p-6">
-        <div className="flex items-center gap-3 rounded-2xl bg-linen-200/60 px-4 py-3">
-          <div className="size-2 rounded-full bg-muted-foreground" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Zen mode
-          </span>
         </div>
       </div>
     </aside>
