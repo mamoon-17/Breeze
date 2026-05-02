@@ -1,6 +1,7 @@
 // Composer at the bottom of a thread.
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import EmojiPicker, { type EmojiClickData } from "emoji-picker-react";
 import { emitTyping, emitStopTyping } from "@/lib/breeze/socket";
 
 interface Props {
@@ -40,6 +41,13 @@ export function ChatComposer({
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordStartedAtRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
+  const emojiPickerRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLDivElement | null>(null);
+  const selectionRef = useRef<number | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [pickerLeft, setPickerLeft] = useState<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -54,9 +62,47 @@ export function ChatComposer({
     };
   }, []);
 
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (emojiPickerRef.current?.contains(target)) return;
+      if (emojiButtonRef.current?.contains(target)) return;
+      setShowEmojiPicker(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showEmojiPicker]);
+
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowEmojiPicker(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [showEmojiPicker]);
+
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+    const button = emojiButtonRef.current;
+    const container = composerRef.current;
+    if (!button || !container) return;
+    const buttonRect = button.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const nextLeft = Math.max(8, Math.round(buttonRect.left - containerRect.left));
+    setPickerLeft(nextLeft);
+  }, [showEmojiPicker]);
+
   const openFilePicker = () => {
     if (disabled) return;
     fileInputRef.current?.click();
+  };
+
+  const updateSelection = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    selectionRef.current = el.selectionStart ?? el.value.length;
   };
 
   const onPickFiles = (files: FileList | null) => {
@@ -105,6 +151,25 @@ export function ChatComposer({
     stopTyping();
     onSend(trimmed);
     setValueFn("");
+  };
+
+  const handleEmojiSelect = (emojiData: EmojiClickData) => {
+    const emoji = emojiData.emoji;
+    const currentValue = value;
+    const input = textareaRef.current;
+    const cursor = input?.selectionStart ?? selectionRef.current ?? currentValue.length;
+    const nextValue = currentValue.slice(0, cursor) + emoji + currentValue.slice(cursor);
+    setValueFn(nextValue);
+    setShowEmojiPicker(false);
+
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const nextCursor = cursor + emoji.length;
+      el.setSelectionRange(nextCursor, nextCursor);
+      selectionRef.current = nextCursor;
+    });
   };
 
   const toggleRecord = async () => {
@@ -163,7 +228,7 @@ export function ChatComposer({
     }
   };
 
-  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKey = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -171,7 +236,7 @@ export function ChatComposer({
   };
 
   return (
-    <div className="shrink-0 px-6 pb-6 md:px-8">
+    <div ref={composerRef} className="relative shrink-0 px-6 pb-6 md:px-8">
       <input
         ref={fileInputRef}
         type="file"
@@ -180,6 +245,15 @@ export function ChatComposer({
         accept="image/*,video/*,application/pdf"
         onChange={(e) => onPickFiles(e.target.files)}
       />
+      {showEmojiPicker && (
+        <div
+          ref={emojiPickerRef}
+          className="absolute bottom-full z-50 mb-2"
+          style={{ left: pickerLeft ?? 0 }}
+        >
+          <EmojiPicker onEmojiClick={handleEmojiSelect} />
+        </div>
+      )}
       <div className="flex items-end gap-2 rounded-2xl border border-linen-200 bg-card p-2 shadow-soft">
         <button
           aria-label="Attach"
@@ -207,9 +281,20 @@ export function ChatComposer({
         </button>
         <button
           aria-label="Emoji"
+          ref={emojiButtonRef}
+          onMouseDown={updateSelection}
+          onClick={() => setShowEmojiPicker((prev) => !prev)}
           className="flex size-10 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition hover:bg-linen-100"
         >
-          <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            viewBox="0 0 24 24"
+            className="size-4"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <circle cx="12" cy="12" r="10" />
             <path d="M8 14s1.5 2 4 2 4-2 4-2" />
             <line x1="9" y1="9" x2="9.01" y2="9" />
@@ -217,9 +302,17 @@ export function ChatComposer({
           </svg>
         </button>
         <textarea
+          ref={textareaRef}
           value={value}
-          onChange={(e) => handleChange(e.target.value)}
+          onChange={(e) => {
+            handleChange(e.target.value);
+            selectionRef.current = e.target.selectionStart ?? e.target.value.length;
+          }}
           onKeyDown={onKey}
+          onClick={updateSelection}
+          onKeyUp={updateSelection}
+          onSelect={updateSelection}
+          onFocus={updateSelection}
           onBlur={stopTyping}
           rows={1}
           placeholder="Write your thoughts…"
