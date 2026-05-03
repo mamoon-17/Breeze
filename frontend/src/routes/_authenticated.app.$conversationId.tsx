@@ -35,6 +35,7 @@ function ConversationView() {
   });
   const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [composerDraft, setComposerDraft] = useState("");
   const [members, setMembers] = useState<
     {
       userId: string;
@@ -475,6 +476,8 @@ function ConversationView() {
           uploadingAttachments={uploadingAttachments}
           conversationId={conversationId}
           disabled={uploadingAudio || uploadingAttachments}
+          externalValue={composerDraft}
+          onExternalChange={setComposerDraft}
         />
       </div>
 
@@ -482,6 +485,9 @@ function ConversationView() {
         conversationTitle={title}
         messageCount={messages.length}
         readReceipts={readReceipts}
+        composerDraft={composerDraft}
+        setComposerDraft={setComposerDraft}
+        conversationId={conversationId}
       />
     </div>
   );

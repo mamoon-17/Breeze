@@ -393,3 +393,28 @@ export const Notifications = {
       body: { endpoint },
     }),
 };
+
+export interface SummaryResult {
+  summary: string;
+  bulletPoints: string[];
+  participants: string[];
+  dateRange: { from: string; to: string };
+}
+
+export const Ai = {
+  enhance: (originalText: string, moodKey: string, conversationId?: string) =>
+    api<{ enhancedText: string }>("/ai/enhance", {
+      method: "POST",
+      body: { originalText, moodKey, conversationId },
+    }),
+  chat: (messages: { role: string; content: string }[]) =>
+    api<{ reply: string }>("/ai/chat", {
+      method: "POST",
+      body: { messages },
+    }),
+  summarise: (conversationId: string, messageLimit?: number) =>
+    api<SummaryResult>("/ai/summarise", {
+      method: "POST",
+      body: { conversationId, messageLimit },
+    }),
+};
