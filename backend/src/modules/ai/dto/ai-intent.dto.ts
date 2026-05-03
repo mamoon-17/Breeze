@@ -1,9 +1,14 @@
-import { IsString, MaxLength } from 'class-validator';
+import { IsString, IsOptional, MaxLength } from 'class-validator';
 
 export class AiIntentDto {
   @IsString()
   @MaxLength(2000)
   text: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  timezone?: string;
 }
 
 export interface AiIntentRecipients {
@@ -13,8 +18,10 @@ export interface AiIntentRecipients {
 }
 
 export interface AiIntentResult {
-  action: 'chat' | 'send_message';
+  action: 'chat' | 'send_message' | 'schedule_reminder';
   instruction?: string;
   recipients?: AiIntentRecipients;
+  scheduledTime?: string;
+  messageBody?: string;
   confidence: number;
 }

@@ -394,9 +394,11 @@ export interface AiIntentRecipients {
 }
 
 export interface AiIntentResult {
-  action: "chat" | "send_message";
+  action: "chat" | "send_message" | "schedule_reminder";
   instruction?: string;
   recipients?: AiIntentRecipients;
+  scheduledTime?: string;
+  messageBody?: string;
   confidence: number;
 }
 
@@ -423,16 +425,45 @@ export interface AiMessageWriterJob {
   }> | null;
 }
 
+export interface ZenHistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  kind: "chat" | "status" | "reminder_confirm";
+  content: string;
+  meta: Record<string, unknown> | null;
+}
+
 export const Ai = {
   enhance: (originalText: string, moodKey: string, conversationId?: string) =>
     api<{ enhancedText: string }>("/ai/enhance", {
       method: "POST",
       body: { originalText, moodKey, conversationId },
     }),
-  intent: (text: string) =>
+  memory: () => api<{ memory: string }>("/ai/memory"),
+  zenHistory: (limit = 200) =>
+    api<{ messages: ZenHistoryMessage[] }>(
+      `/ai/zen/history?limit=${encodeURIComponent(String(limit))}`,
+    ),
+  zenAppend: (msg: {
+    role: "user" | "assistant";
+    content: string;
+    kind?: "chat" | "status" | "reminder_confirm";
+    meta?: Record<string, unknown> | null;
+  }) =>
+    api<{ id: string }>("/ai/zen/history", {
+      method: "POST",
+      body: msg,
+    }),
+  zenPatchMeta: (messageId: string, metaPatch: Record<string, unknown>) =>
+    api<{ ok: true }>(`/ai/zen/history/${encodeURIComponent(messageId)}`, {
+      method: "PATCH",
+      body: { metaPatch },
+    }),
+  zenClear: () => api<{ ok: true }>("/ai/zen/history", { method: "DELETE" }),
+  intent: (text: string, timezone?: string) =>
     api<AiIntentResult>("/ai/intent", {
       method: "POST",
-      body: { text },
+      body: { text, timezone },
     }),
   chat: (messages: { role: string; content: string }[]) =>
     api<{ reply: string }>("/ai/chat", {
@@ -450,4 +481,48 @@ export const Ai = {
       body: payload,
     }),
   messageWriterStatus: (jobId: string) => api<AiMessageWriterJob>(`/ai/message-writer/${jobId}`),
+  createReminder: (instruction: string, timezone?: string) =>
+    api<ReminderParseResult>("/ai/reminder", {
+      method: "POST",
+      body: { instruction, timezone },
+    }),
+  confirmReminder: (jobId: string) =>
+    api<{ jobId: string; status: string }>(`/ai/reminder/${jobId}/confirm`, {
+      method: "POST",
+    }),
+  cancelReminder: (jobId: string) =>
+    api<{ jobId: string; status: string }>(`/ai/reminder/${jobId}/cancel`, {
+      method: "POST",
+    }),
+  listReminders: () => api<{ reminders: ReminderJobSummary[] }>("/ai/reminders"),
 };
+
+export interface ReminderParseResult {
+  jobId: string;
+  status: string;
+  confirmationText: string;
+  messageBody: string;
+  scheduledAt: string;
+  recipients: {
+    allConversations?: boolean;
+    conversationNames?: string[];
+    emails?: string[];
+  };
+}
+
+export interface ReminderJobSummary {
+  id: string;
+  status: string;
+  instruction: string;
+  messageBody: string;
+  scheduledAt: string;
+  timezone: string;
+  confirmationText: string;
+  recipients: {
+    allConversations?: boolean;
+    conversationNames?: string[];
+    emails?: string[];
+  };
+  errorMessage: string | null;
+  createdAt: string;
+}
