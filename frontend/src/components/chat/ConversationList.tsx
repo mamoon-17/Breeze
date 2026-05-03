@@ -8,6 +8,7 @@ interface Props {
   activeId?: string;
   currentUserId: string;
   typingConvoIds?: Set<string>;
+  scheduledConvoIds?: Set<string>;
   onSelect: (id: string) => void;
 }
 
@@ -16,6 +17,7 @@ export function ConversationList({
   loading,
   activeId,
   typingConvoIds,
+  scheduledConvoIds,
   onSelect,
 }: Props) {
   if (loading) {
@@ -102,9 +104,16 @@ export function ConversationList({
                   <h3 className="truncate text-sm font-semibold text-foreground">
                     {title}
                   </h3>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    {timestamp}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {(scheduledConvoIds?.has(c.id) ?? false) && (
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-600" title="Scheduled reminder">
+                        ⏰
+                      </span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground">
+                      {timestamp}
+                    </span>
+                  </div>
                 </div>
                 <div className="mt-0.5 flex items-center justify-between gap-2">
                   {isTyping ? (

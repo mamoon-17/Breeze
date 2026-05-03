@@ -4,14 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  DataSource,
-  In,
-  IsNull,
-  LessThan,
-  Not,
-  Repository,
-} from 'typeorm';
+import { DataSource, In, IsNull, LessThan, Not, Repository } from 'typeorm';
 import { SocketStateService } from '../socket/socket-state.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { ChatMessage } from './chat-message.entity';
@@ -21,6 +14,7 @@ import { ChatMessageAttachment } from './chat-message-attachment.entity';
 import { AppConfigService } from '../../config/app-config.service';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ChatService {
@@ -37,6 +31,7 @@ export class ChatService {
     private readonly conversationService: ConversationService,
     private readonly socketState: SocketStateService,
     private readonly appConfig: AppConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {
     this.s3 = new S3Client({
       region: appConfig.s3Region,
@@ -49,7 +44,10 @@ export class ChatService {
     });
   }
 
-  async saveMessage(dto: SendMessageDto, senderId: string): Promise<ChatMessage> {
+  async saveMessage(
+    dto: SendMessageDto,
+    senderId: string,
+  ): Promise<ChatMessage> {
     const memberIds = await this.conversationService.getMemberUserIds(dto.room);
     if (!memberIds.includes(senderId)) {
       throw new ForbiddenException('You are not a member of this conversation');
@@ -106,6 +104,43 @@ export class ChatService {
     });
     await this.hydrateAttachmentUrls([full]);
     return full;
+  }
+
+  async sendMessageAndNotify(
+    dto: SendMessageDto,
+    senderId: string,
+  ): Promise<ChatMessage> {
+    const message = await this.saveMessage(dto, senderId);
+    this.socketState.emitToRoom(dto.room, 'newMessage', message);
+
+    const memberIds = await this.conversationService.getMemberUserIds(dto.room);
+    const recipients = memberIds.filter((id) => id !== senderId);
+
+    for (const recipientId of recipients) {
+      if (this.socketState.isUserOnline(recipientId)) {
+        const { deliveredAt } = await this.markDelivered(recipientId, [
+          message.id,
+        ]);
+        this.socketState.emitToRoom(dto.room, 'messageDelivered', {
+          messageId: message.id,
+          userId: recipientId,
+          deliveredAt,
+        });
+      } else {
+        await this.notificationsService.notifyNewMessage(recipientId, {
+          type: 'new_message',
+          room: dto.room,
+          message: {
+            id: message.id,
+            senderId: message.senderId,
+            message: message.message,
+            sentAt: message.sentAt,
+          },
+        });
+      }
+    }
+
+    return message;
   }
 
   async deliverPendingMessages(
@@ -214,7 +249,11 @@ export class ChatService {
         .execute();
     }
 
-    await this.conversationService.updateLastReadAt(userId, conversationId, now);
+    await this.conversationService.updateLastReadAt(
+      userId,
+      conversationId,
+      now,
+    );
 
     return { messageIds: ids, readAt: now };
   }
@@ -255,7 +294,10 @@ export class ChatService {
     for (const m of messages) {
       for (const a of m.attachments ?? []) {
         // Mutate the serialized object with a signed URL for clients.
-        toSign.push({ key: a.key, target: a as unknown as Record<string, unknown> });
+        toSign.push({
+          key: a.key,
+          target: a as unknown as Record<string, unknown>,
+        });
       }
     }
     if (toSign.length === 0) return;
@@ -291,7 +333,11 @@ export class ChatService {
     }
 
     const deleted = await this.chatMessageRepository.softRemove(msg);
-    return { messageId: deleted.id, room: deleted.room, deletedAt: deleted.deletedAt! };
+    return {
+      messageId: deleted.id,
+      room: deleted.room,
+      deletedAt: deleted.deletedAt!,
+    };
   }
 
   async broadcastAnnouncement(text: string): Promise<void> {

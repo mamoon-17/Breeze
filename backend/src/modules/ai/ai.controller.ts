@@ -7,6 +7,11 @@ import {
   Logger,
   HttpException,
   HttpStatus,
+  Get,
+  Param,
+  Query,
+  Delete,
+  Patch,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AiService } from './ai.service';
@@ -15,6 +20,22 @@ import { AiChatDto } from './dto/chat-message.dto';
 import { moodSystemPrompt } from './prompts/mood.prompts';
 import { SummariseChatDto } from './dto/summarise-chat.dto';
 import type { SummaryResult } from './dto/summarise-chat.dto';
+import { AiMessageWriterService } from './ai-message-writer.service';
+import { AiMessageWriterDto } from './dto/ai-message-writer.dto';
+import { AiMessageJob } from './ai-message-job.entity';
+import { AiIntentDto, AiIntentResult } from './dto/ai-intent.dto';
+import {
+  buildIntentUserPrompt,
+  intentSystemPrompt,
+} from './prompts/intent.prompts';
+import { ReminderService } from './reminder.service';
+import { CreateReminderDto } from './dto/schedule-reminder.dto';
+import type { ReminderParseResult } from './dto/schedule-reminder.dto';
+import { ReminderJob } from './reminder-job.entity';
+import {
+  ZenChatMessageDto,
+  ZenPatchZenMessageDto,
+} from './dto/zen-chat-message.dto';
 
 const BREEZE_ASSISTANT_SYSTEM = `You are Breeze Assistant, a helpful AI inside a chat app. You help users rephrase messages, suggest replies, and improve their communication. Be concise.`;
 
@@ -22,7 +43,80 @@ const BREEZE_ASSISTANT_SYSTEM = `You are Breeze Assistant, a helpful AI inside a
 export class AiController {
   private readonly logger = new Logger(AiController.name);
 
-  constructor(private readonly aiService: AiService) {}
+  constructor(
+    private readonly aiService: AiService,
+    private readonly aiMessageWriterService: AiMessageWriterService,
+    private readonly reminderService: ReminderService,
+  ) {}
+
+  @Get('memory')
+  @UseGuards(JwtAuthGuard)
+  async memory(
+    @Request() req: { user: { id: string } },
+  ): Promise<{ memory: string }> {
+    const memory = await this.aiService.getUserMemory(req.user.id);
+    return { memory };
+  }
+
+  // ─── Zen AI Chat History (persisted) ───────────────────────────────────────
+
+  @Get('zen/history')
+  @UseGuards(JwtAuthGuard)
+  async zenHistory(
+    @Request() req: { user: { id: string } },
+    @Query('limit') limit?: string,
+  ): Promise<{
+    messages: {
+      id: string;
+      role: 'user' | 'assistant';
+      kind: 'chat' | 'status' | 'reminder_confirm';
+      content: string;
+      meta: Record<string, unknown> | null;
+    }[];
+  }> {
+    const n = Math.max(1, Math.min(500, Number(limit ?? 200) || 200));
+    const messages = await this.aiService.getZenChatHistory(req.user.id, n);
+    return { messages };
+  }
+
+  @Post('zen/history')
+  @UseGuards(JwtAuthGuard)
+  async appendZenHistory(
+    @Request() req: { user: { id: string } },
+    @Body() dto: ZenChatMessageDto,
+  ): Promise<{ id: string }> {
+    return this.aiService.appendZenChatMessage(
+      req.user.id,
+      dto.role,
+      dto.content,
+      dto.kind ?? 'chat',
+      dto.meta ?? null,
+    );
+  }
+
+  @Patch('zen/history/:id')
+  @UseGuards(JwtAuthGuard)
+  async patchZenHistory(
+    @Param('id') id: string,
+    @Request() req: { user: { id: string } },
+    @Body() dto: ZenPatchZenMessageDto,
+  ): Promise<{ ok: true }> {
+    await this.aiService.patchZenChatMessageMeta(
+      req.user.id,
+      id,
+      dto.metaPatch,
+    );
+    return { ok: true };
+  }
+
+  @Delete('zen/history')
+  @UseGuards(JwtAuthGuard)
+  async clearZenHistory(
+    @Request() req: { user: { id: string } },
+  ): Promise<{ ok: true }> {
+    await this.aiService.clearZenChatHistory(req.user.id);
+    return { ok: true };
+  }
 
   @Post('enhance')
   @UseGuards(JwtAuthGuard)
@@ -58,12 +152,23 @@ export class AiController {
       `User ${req.user.id} AI chat — ${dto.messages.length} messages`,
     );
     try {
+      const memory = await this.aiService.getUserMemory(req.user.id);
+
       // Prepend the system prompt so every conversation has the assistant context
       const messagesWithSystem: {
         role: 'system' | 'user' | 'assistant';
         content: string;
       }[] = [
         { role: 'system', content: BREEZE_ASSISTANT_SYSTEM },
+        ...(memory
+          ? [
+              {
+                role: 'system' as const,
+                content:
+                  `User memory (applies across all chats; use only when relevant):\n${memory}`.trim(),
+              },
+            ]
+          : []),
         ...dto.messages,
       ];
       const reply = await this.aiService.chat(messagesWithSystem);
@@ -74,6 +179,25 @@ export class AiController {
         'AI service temporarily unavailable',
         HttpStatus.SERVICE_UNAVAILABLE,
       );
+    }
+  }
+
+  @Post('intent')
+  @UseGuards(JwtAuthGuard)
+  async intent(
+    @Body() dto: AiIntentDto,
+    @Request() req: { user: { id: string } },
+  ): Promise<AiIntentResult> {
+    this.logger.log(`User ${req.user.id} AI intent check`);
+    try {
+      const raw = await this.aiService.complete(
+        intentSystemPrompt,
+        buildIntentUserPrompt(dto.text),
+      );
+      return this.normalizeIntent(raw, dto.text);
+    } catch (error) {
+      this.logger.error('AI intent failed', error);
+      return { action: 'chat', confidence: 0 };
     }
   }
 
@@ -91,5 +215,159 @@ export class AiController {
       dto.messageLimit,
       req.user.id,
     );
+  }
+
+  @Post('message-writer')
+  @UseGuards(JwtAuthGuard)
+  async queueMessageWriter(
+    @Body() dto: AiMessageWriterDto,
+    @Request() req: { user: { id: string } },
+  ): Promise<{ jobId: string; status: string }> {
+    this.logger.log(`User ${req.user.id} queued AI message writer job`);
+    const job = await this.aiMessageWriterService.createJob(dto, req.user.id);
+    return { jobId: job.id, status: job.status };
+  }
+
+  @Get('message-writer/:jobId')
+  @UseGuards(JwtAuthGuard)
+  async getMessageWriterJob(
+    @Param('jobId') jobId: string,
+    @Request() req: { user: { id: string } },
+  ): Promise<AiMessageJob> {
+    return this.aiMessageWriterService.getJob(jobId, req.user.id);
+  }
+
+  // ─── Reminder Endpoints ───────────────────────────────────────────────────
+
+  @Post('reminder')
+  @UseGuards(JwtAuthGuard)
+  async createReminder(
+    @Body() dto: CreateReminderDto,
+    @Request() req: { user: { id: string } },
+  ): Promise<ReminderParseResult> {
+    this.logger.log(`User ${req.user.id} creating reminder`);
+    const timezone = dto.timezone || 'UTC';
+    return this.reminderService.parseAndCreate(
+      dto.instruction,
+      req.user.id,
+      timezone,
+    );
+  }
+
+  @Post('reminder/:id/confirm')
+  @UseGuards(JwtAuthGuard)
+  async confirmReminder(
+    @Param('id') id: string,
+    @Request() req: { user: { id: string } },
+  ): Promise<{ jobId: string; status: string }> {
+    const job = await this.reminderService.confirm(id, req.user.id);
+    return { jobId: job.id, status: job.status };
+  }
+
+  @Post('reminder/:id/cancel')
+  @UseGuards(JwtAuthGuard)
+  async cancelReminder(
+    @Param('id') id: string,
+    @Request() req: { user: { id: string } },
+  ): Promise<{ jobId: string; status: string }> {
+    const job = await this.reminderService.cancel(id, req.user.id);
+    return { jobId: job.id, status: job.status };
+  }
+
+  @Get('reminders')
+  @UseGuards(JwtAuthGuard)
+  async listReminders(
+    @Request() req: { user: { id: string } },
+  ): Promise<{ reminders: ReminderJob[] }> {
+    const reminders = await this.reminderService.getRemindersForUser(
+      req.user.id,
+    );
+    return { reminders };
+  }
+
+  // ─── Private ──────────────────────────────────────────────────────────────
+
+  private normalizeIntent(raw: string, fallbackText: string): AiIntentResult {
+    try {
+      const parsed = JSON.parse(raw) as Partial<AiIntentResult> & {
+        recipients?: { [key: string]: unknown };
+      };
+      const action =
+        parsed.action === 'send_message'
+          ? 'send_message'
+          : parsed.action === 'schedule_reminder'
+            ? 'schedule_reminder'
+            : 'chat';
+      const confidence = this.toConfidence(parsed.confidence);
+
+      if (action === 'chat') {
+        return { action, confidence };
+      }
+
+      const instruction =
+        typeof parsed.instruction === 'string' && parsed.instruction.trim()
+          ? parsed.instruction.trim()
+          : fallbackText.trim();
+      const recipients = parsed.recipients ?? {};
+      const conversationNames = this.toStringList(recipients.conversationNames);
+      const emails = this.toStringList(recipients.emails, true);
+      const allConversations = Boolean(recipients.allConversations);
+
+      if (
+        !allConversations &&
+        conversationNames.length === 0 &&
+        emails.length === 0
+      ) {
+        return { action: 'chat', confidence: Math.min(confidence, 0.3) };
+      }
+
+      const result: AiIntentResult = {
+        action,
+        instruction,
+        recipients: {
+          allConversations,
+          conversationNames,
+          emails,
+        },
+        confidence,
+      };
+
+      // Carry schedule-specific fields for reminder intents
+      if (action === 'schedule_reminder') {
+        if (
+          typeof parsed.scheduledTime === 'string' &&
+          parsed.scheduledTime.trim()
+        ) {
+          result.scheduledTime = parsed.scheduledTime.trim();
+        }
+        if (
+          typeof parsed.messageBody === 'string' &&
+          parsed.messageBody.trim()
+        ) {
+          result.messageBody = parsed.messageBody.trim();
+        }
+      }
+
+      return result;
+    } catch (error) {
+      this.logger.error('AI intent parse error — raw response:', raw);
+      return { action: 'chat', confidence: 0 };
+    }
+  }
+
+  private toStringList(input: unknown, lower = false): string[] {
+    if (!Array.isArray(input)) return [];
+    const cleaned = input
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => (lower ? value.trim().toLowerCase() : value.trim()))
+      .filter((value) => value.length > 0);
+    return Array.from(new Set(cleaned));
+  }
+
+  private toConfidence(value: unknown): number {
+    if (typeof value !== 'number' || Number.isNaN(value)) return 0;
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    return value;
   }
 }
