@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Ai } from "@/lib/breeze/api";
-import type { SummaryResult } from "@/lib/breeze/api";
+import type { AiIntentResult, AiMessageWriterJob, SummaryResult } from "@/lib/breeze/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +78,7 @@ const MOODS: MoodOption[] = [
 interface ChatMsg {
   role: "user" | "assistant";
   content: string;
+  kind?: "chat" | "status";
 }
 
 interface Props {
@@ -100,6 +101,36 @@ function formatDateReadable(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function buildAiChatHistory(
+  messages: ChatMsg[],
+): { role: "user" | "assistant"; content: string }[] {
+  return messages
+    .filter((m) => m.kind !== "status")
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
+function summarizeWriterJob(job: AiMessageWriterJob): string {
+  const results = job.results ?? [];
+  const successes = results.filter((r) => Boolean(r.messageId));
+  const failures = results.filter((r) => Boolean(r.error));
+
+  if (successes.length === 0) {
+    const error = job.errorMessage ?? failures[0]?.error ?? "Unknown error";
+    return `I couldn't send that. ${error}`;
+  }
+
+  const successLabel =
+    successes.length === 1 ? "1 conversation" : `${successes.length} conversations`;
+
+  if (failures.length === 0) {
+    return `Sent to ${successLabel}.`;
+  }
+
+  const failureLabel =
+    failures.length === 1 ? "1 conversation" : `${failures.length} conversations`;
+  return `Sent to ${successLabel}. Failed for ${failureLabel}.`;
 }
 
 const LIMIT_OPTIONS: { label: string; value: number }[] = [
@@ -231,17 +262,20 @@ export function AssistPanel({
     const text = chatInput.trim();
     if (!text || chatLoading) return;
 
-    const userMsg: ChatMsg = { role: "user", content: text };
+    const userMsg: ChatMsg = { role: "user", content: text, kind: "chat" };
     const newMessages = [...chatMessages, userMsg];
     setChatMessages(newMessages);
     setChatInput("");
     setChatLoading(true);
 
     try {
-      const { reply } = await Ai.chat(
-        newMessages.map((m) => ({ role: m.role, content: m.content })),
-      );
-      setChatMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+      const intent = await Ai.intent(text);
+      if (intent.action === "send_message") {
+        await handleSendIntent(intent, text);
+      } else {
+        const { reply } = await Ai.chat(buildAiChatHistory(newMessages));
+        setChatMessages((prev) => [...prev, { role: "assistant", content: reply, kind: "chat" }]);
+      }
     } catch (err) {
       console.error(err);
       setChatMessages((prev) => [
@@ -249,11 +283,79 @@ export function AssistPanel({
         {
           role: "assistant",
           content: "Sorry, I couldn't respond right now. Please try again.",
+          kind: "status",
         },
       ]);
     } finally {
       setChatLoading(false);
     }
+  };
+
+  const handleSendIntent = async (intent: AiIntentResult, rawText: string) => {
+    const recipients = intent.recipients ?? {};
+    const payload = {
+      instruction: intent.instruction?.trim() || rawText,
+      allConversations: Boolean(recipients.allConversations),
+      conversationNames: recipients.conversationNames,
+      recipientEmails: recipients.emails,
+      contextMessageLimit: 6,
+    };
+
+    const hasTargets =
+      payload.allConversations ||
+      (payload.conversationNames?.length ?? 0) > 0 ||
+      (payload.recipientEmails?.length ?? 0) > 0;
+
+    if (!hasTargets) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Who should I send that to? You can use a name or email.",
+          kind: "status",
+        },
+      ]);
+      return;
+    }
+
+    setChatMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: "Sending your message...", kind: "status" },
+    ]);
+
+    const { jobId } = await Ai.messageWriter(payload);
+    const job = await pollMessageWriterJob(jobId);
+    if (!job) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Queued in the background. I'll keep sending it.",
+          kind: "status",
+        },
+      ]);
+      return;
+    }
+
+    setChatMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: summarizeWriterJob(job), kind: "status" },
+    ]);
+  };
+
+  const pollMessageWriterJob = async (jobId: string): Promise<AiMessageWriterJob | null> => {
+    const maxAttempts = 8;
+    const delayMs = 700;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const job = await Ai.messageWriterStatus(jobId);
+      if (job.status !== "queued" && job.status !== "processing") {
+        return job;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    return null;
   };
 
   return (

@@ -24,7 +24,6 @@ import { JwtService } from '@nestjs/jwt';
 import type { JwtRefreshPayload } from '../auth/types/auth.types';
 import { AuthService } from '../auth/auth.service';
 import { TokenBlacklistService } from '../auth/token-blacklist.service';
-import { NotificationsService } from '../notifications/notifications.service';
 
 const wsValidationPipe = new ValidationPipe({
   whitelist: true,
@@ -55,7 +54,6 @@ export class ChatGateway
     private readonly jwtService: JwtService,
     private readonly authService: AuthService,
     private readonly tokenBlacklistService: TokenBlacklistService,
-    private readonly notificationsService: NotificationsService,
   ) {}
 
   afterInit(server: Server) {
@@ -91,7 +89,9 @@ export class ChatGateway
           payload.uid === client.data.user.id
         ) {
           client.data.refreshSessionId = payload.sid;
-          client.data.refreshTokenExp = (payload as unknown as { exp?: number }).exp;
+          client.data.refreshTokenExp = (
+            payload as unknown as { exp?: number }
+          ).exp;
         }
       } catch {
         // Ignore here; packet middleware below will force disconnect if needed.
@@ -114,14 +114,15 @@ export class ChatGateway
 
         // 2) Validate refresh session to ensure the session is still active.
         if (client.data.refreshSessionId) {
-          const sessionResult = await this.authService.getSessionByRefreshPayload({
-            tokenType: 'refresh',
-            sid: client.data.refreshSessionId,
-            uid: client.data.user.id,
-            sub: client.data.user.providerId,
-            email: client.data.user.email,
-            provider: client.data.user.provider,
-          });
+          const sessionResult =
+            await this.authService.getSessionByRefreshPayload({
+              tokenType: 'refresh',
+              sid: client.data.refreshSessionId,
+              uid: client.data.user.id,
+              sub: client.data.user.providerId,
+              email: client.data.user.email,
+              provider: client.data.user.provider,
+            });
 
           const session = sessionResult.isErr() ? null : sessionResult.value;
           const now = new Date();
@@ -155,9 +156,8 @@ export class ChatGateway
 
     // Presence: join all conversation rooms this user is a member of,
     // then broadcast online status to those rooms.
-    const conversations = await this.conversationService.getConversationsForUser(
-      userId,
-    );
+    const conversations =
+      await this.conversationService.getConversationsForUser(userId);
     const roomIds = conversations.map((c) => c.id);
     if (roomIds.length > 0) {
       await client.join(roomIds);
@@ -221,7 +221,9 @@ export class ChatGateway
     );
 
     if (!isMember) {
-      throw new WsException('Unauthorized: you are not a member of this conversation');
+      throw new WsException(
+        'Unauthorized: you are not a member of this conversation',
+      );
     }
 
     await client.join(conversationId);
@@ -239,7 +241,9 @@ export class ChatGateway
     );
 
     if (!isMember) {
-      throw new WsException('Unauthorized: you are not a member of this conversation');
+      throw new WsException(
+        'Unauthorized: you are not a member of this conversation',
+      );
     }
 
     const memberIds =
@@ -263,37 +267,12 @@ export class ChatGateway
     );
 
     if (!isMember) {
-      throw new WsException('Unauthorized: you are not a member of this conversation');
+      throw new WsException(
+        'Unauthorized: you are not a member of this conversation',
+      );
     }
 
-    const message = await this.chatService.saveMessage(dto, client.data.user.id);
-    this.socketState.emitToRoom(dto.room, 'newMessage', message);
-
-    const memberIds = await this.conversationService.getMemberUserIds(dto.room);
-    const recipients = memberIds.filter((id) => id !== client.data.user.id);
-    for (const recipientId of recipients) {
-      if (this.socketState.isUserOnline(recipientId)) {
-        const { deliveredAt } = await this.chatService.markDelivered(recipientId, [
-          message.id,
-        ]);
-        this.socketState.emitToRoom(dto.room, 'messageDelivered', {
-          messageId: message.id,
-          userId: recipientId,
-          deliveredAt,
-        });
-      } else {
-        await this.notificationsService.notifyNewMessage(recipientId, {
-          type: 'new_message',
-          room: dto.room,
-          message: {
-            id: message.id,
-            senderId: message.senderId,
-            message: message.message,
-            sentAt: message.sentAt,
-          },
-        });
-      }
-    }
+    await this.chatService.sendMessageAndNotify(dto, client.data.user.id);
   }
 
   @SubscribeMessage('markRead')

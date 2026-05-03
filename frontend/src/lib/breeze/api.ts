@@ -22,8 +22,8 @@ const tokenListeners = new Set<(t: AuthTokens | null) => void>();
 let tokensSnapshot: AuthTokens | null = null;
 
 export const API_BASE: string =
-  ((import.meta as unknown as { env?: Record<string, string> }).env
-    ?.VITE_API_URL as string) ?? "http://localhost:3000";
+  ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL as string) ??
+  "http://localhost:3000";
 
 export function getAccessToken(): string | null {
   return accessToken;
@@ -100,10 +100,7 @@ export interface RequestOpts extends Omit<RequestInit, "body" | "headers"> {
   retry?: boolean;
 }
 
-export async function api<T = unknown>(
-  path: string,
-  opts: RequestOpts = {},
-): Promise<T> {
+export async function api<T = unknown>(path: string, opts: RequestOpts = {}): Promise<T> {
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...(opts.headers ?? {}),
@@ -170,8 +167,7 @@ export const Auth = {
   },
   me: () => api<{ user: BreezeUser }>("/auth/me"),
   logout: () => api<{ message: string }>("/auth/logout", { method: "POST" }),
-  logoutAll: () =>
-    api<{ message: string }>("/auth/logout-all", { method: "POST" }),
+  logoutAll: () => api<{ message: string }>("/auth/logout-all", { method: "POST" }),
   sessions: () => api<{ sessions: SessionFamily[] }>("/auth/sessions"),
   revokeSession: (familyId: string) =>
     api<{ message: string }>(`/auth/sessions/${familyId}`, {
@@ -185,8 +181,7 @@ export const Auth = {
 
 export const Users = {
   byId: (id: string) => api<{ user: BreezeUser }>(`/user/${id}`),
-  byEmail: (email: string) =>
-    api<{ user: BreezeUser }>(`/user/email/${encodeURIComponent(email)}`),
+  byEmail: (email: string) => api<{ user: BreezeUser }>(`/user/email/${encodeURIComponent(email)}`),
   /**
    * Returns the user if they exist, or `null` (instead of throwing) if not.
    * Use this when building a UI that should show "not on Breeze" without
@@ -194,9 +189,7 @@ export const Users = {
    */
   lookupByEmail: async (email: string): Promise<BreezeUser | null> => {
     try {
-      const { user } = await api<{ user: BreezeUser }>(
-        `/user/email/${encodeURIComponent(email)}`,
-      );
+      const { user } = await api<{ user: BreezeUser }>(`/user/email/${encodeURIComponent(email)}`);
       return user;
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;
@@ -211,10 +204,7 @@ export const Profile = {
    * Send `customDisplayName: ""` or `null` to clear the override and fall
    * back to the Google-supplied name.
    */
-  update: (patch: {
-    customDisplayName?: string | null;
-    useGoogleAvatar?: boolean;
-  }) =>
+  update: (patch: { customDisplayName?: string | null; useGoogleAvatar?: boolean }) =>
     api<{ user: BreezeUser }>("/user/me/profile", {
       method: "PATCH",
       body: patch,
@@ -227,12 +217,13 @@ export const Profile = {
       body: form,
     });
   },
-  deleteAvatar: () =>
-    api<{ user: BreezeUser }>("/user/me/avatar", { method: "DELETE" }),
+  deleteAvatar: () => api<{ user: BreezeUser }>("/user/me/avatar", { method: "DELETE" }),
 };
 
 export const Upload = {
-  audio: async (blob: Blob): Promise<{
+  audio: async (
+    blob: Blob,
+  ): Promise<{
     attachmentUrl: string;
     attachmentType: "audio";
     contentType: string;
@@ -290,9 +281,7 @@ export const Upload = {
  * caller fall back to initials. Accepts either a full URL (passes through)
  * or the relative `/user/:id/avatar?v=…` we get from our own API.
  */
-export function resolveAvatarUrl(
-  relativeOrNull: string | null | undefined,
-): string | null {
+export function resolveAvatarUrl(relativeOrNull: string | null | undefined): string | null {
   if (!relativeOrNull) return null;
   if (/^https?:\/\//i.test(relativeOrNull)) return relativeOrNull;
   return `${API_BASE}${relativeOrNull}`;
@@ -343,9 +332,7 @@ export const Conversations = {
   history: (id: string, limit = 50, before?: string) => {
     const qs = new URLSearchParams({ limit: String(limit) });
     if (before) qs.set("before", before);
-    return api<{ messages: ChatMessage[] }>(
-      `/conversations/${id}/history?${qs.toString()}`,
-    );
+    return api<{ messages: ChatMessage[] }>(`/conversations/${id}/history?${qs.toString()}`);
   },
   invite: (id: string, emails: string[]) =>
     api<InviteEmailsResponse>(`/conversations/${id}/invites`, {
@@ -359,8 +346,7 @@ export const Conversations = {
 };
 
 export const Invitations = {
-  list: () =>
-    api<{ invitations: ConversationInvitation[] }>(`/invitations`),
+  list: () => api<{ invitations: ConversationInvitation[] }>(`/invitations`),
   accept: (id: string) =>
     api<{ conversationId: string }>(`/invitations/${id}/accept`, {
       method: "POST",
@@ -401,11 +387,52 @@ export interface SummaryResult {
   dateRange: { from: string; to: string };
 }
 
+export interface AiIntentRecipients {
+  allConversations?: boolean;
+  conversationNames?: string[];
+  emails?: string[];
+}
+
+export interface AiIntentResult {
+  action: "chat" | "send_message";
+  instruction?: string;
+  recipients?: AiIntentRecipients;
+  confidence: number;
+}
+
+export interface AiMessageWriterPayload {
+  instruction: string;
+  allConversations?: boolean;
+  conversationNames?: string[];
+  recipientEmails?: string[];
+  contextMessageLimit?: number;
+}
+
+export interface AiMessageWriterJob {
+  id: string;
+  status: string;
+  errorMessage: string | null;
+  results: Array<{
+    conversationId?: string;
+    conversationName?: string | null;
+    recipientUserId?: string;
+    recipientEmail?: string;
+    draft?: string;
+    messageId?: string;
+    error?: string;
+  }> | null;
+}
+
 export const Ai = {
   enhance: (originalText: string, moodKey: string, conversationId?: string) =>
     api<{ enhancedText: string }>("/ai/enhance", {
       method: "POST",
       body: { originalText, moodKey, conversationId },
+    }),
+  intent: (text: string) =>
+    api<AiIntentResult>("/ai/intent", {
+      method: "POST",
+      body: { text },
     }),
   chat: (messages: { role: string; content: string }[]) =>
     api<{ reply: string }>("/ai/chat", {
@@ -417,4 +444,10 @@ export const Ai = {
       method: "POST",
       body: { conversationId, messageLimit },
     }),
+  messageWriter: (payload: AiMessageWriterPayload) =>
+    api<{ jobId: string; status: string }>("/ai/message-writer", {
+      method: "POST",
+      body: payload,
+    }),
+  messageWriterStatus: (jobId: string) => api<AiMessageWriterJob>(`/ai/message-writer/${jobId}`),
 };
