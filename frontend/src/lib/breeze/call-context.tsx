@@ -44,11 +44,13 @@ interface CallContextValue {
   callId: string | null;
   conversationId: string | null;
   peerId: string | null;
+  /** Resolved display name of the peer (from backend on incoming, from members on outgoing). */
+  peerName: string | null;
   isMuted: boolean;
   answeredAt: Date | null;
   /** True when the active call overlay is visible (user can hide it to browse). */
   overlayVisible: boolean;
-  initiateCall: (calleeId: string, conversationId: string) => Promise<void>;
+  initiateCall: (calleeId: string, conversationId: string, calleeName?: string) => Promise<void>;
   acceptCall: () => Promise<void>;
   rejectCall: () => void;
   cancelCall: () => void;
@@ -116,6 +118,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [callId, setCallId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [peerId, setPeerId] = useState<string | null>(null);
+  const [peerName, setPeerName] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [answeredAt, setAnsweredAt] = useState<Date | null>(null);
   const [overlayVisible, setOverlayVisible] = useState(false);
@@ -156,6 +159,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setCallId(null);
     setConversationId(null);
     setPeerId(null);
+    setPeerName(null);
     setIsMuted(false);
     setAnsweredAt(null);
     setOverlayVisible(false);
@@ -176,6 +180,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setCallId(evt.callId);
       setConversationId(evt.conversationId);
       setPeerId(evt.callerId);
+      setPeerName((evt as WsCallIncoming & { callerName?: string }).callerName ?? null);
       setCallState("incoming");
       setOverlayVisible(true);
       incomingOfferRef.current = evt.offer;
@@ -250,7 +255,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   // ─── Actions ──────────────────────────────────────────────────────────
 
   const initiateCall = useCallback(
-    async (calleeId: string, convId: string) => {
+    async (calleeId: string, convId: string, calleeName?: string) => {
       if (callState !== "idle") {
         toast.error("You're already in a call");
         return;
@@ -267,6 +272,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         setCallState("outgoing");
         setConversationId(convId);
         setPeerId(calleeId);
+        setPeerName(calleeName ?? null);
         setOverlayVisible(true);
 
         const result = await emitCallInitiate(convId, calleeId, offerSdp);
@@ -343,6 +349,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         callId,
         conversationId,
         peerId,
+        peerName,
         isMuted,
         answeredAt,
         overlayVisible,

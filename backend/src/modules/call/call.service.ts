@@ -8,6 +8,7 @@ import { SocketStateService } from '../socket/socket-state.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { ChatService } from '../chat/chat.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UserService } from '../user/user.service';
 import {
   CallServerEvents,
   CallErrorCodes,
@@ -28,6 +29,7 @@ export class CallService {
     private readonly conversationService: ConversationService,
     private readonly chatService: ChatService,
     private readonly notificationsService: NotificationsService,
+    private readonly userService: UserService,
   ) {}
 
   // ─── Initiate ──────────────────────────────────────────────────────────────
@@ -99,11 +101,27 @@ export class CallService {
 
     this.sessionMap.create(session);
 
+    // Resolve caller display name for the callee's UI
+    let callerName: string | undefined;
+    try {
+      const result = await this.userService.findById(callerId);
+      if (result.isOk()) {
+        const u = result.value;
+        callerName =
+          (u as { customDisplayName?: string | null }).customDisplayName ??
+          u.displayName ??
+          u.email;
+      }
+    } catch {
+      // Non-fatal — callee will see a fallback
+    }
+
     // Notify callee
     this.socketState.emitToUser(calleeId, CallServerEvents.INCOMING, {
       callId,
       conversationId,
       callerId,
+      callerName,
       offer,
     });
 

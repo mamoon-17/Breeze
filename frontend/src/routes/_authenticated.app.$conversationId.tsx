@@ -447,7 +447,10 @@ function ConversationView() {
               onClick={() => {
                 if (conversation?.type !== "dm" || !user) return;
                 const peer = members.find((m) => m.userId !== user.id);
-                if (peer) initiateCall(peer.userId, conversationId);
+                if (peer) {
+                  const name = peer.user?.displayName ?? peer.user?.email ?? undefined;
+                  initiateCall(peer.userId, conversationId, name);
+                }
               }}
             >
               <svg viewBox="0 0 24 24" className="size-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

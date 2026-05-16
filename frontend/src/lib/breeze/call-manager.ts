@@ -69,7 +69,12 @@ export class CallManager {
     this.createPeerConnection(iceServers);
 
     const offer = await this.pc!.createOffer();
-    await this.pc!.setLocalDescription(offer);
+    // Munge SDP for better audio quality before setting
+    const mungedOffer = {
+      ...offer,
+      sdp: offer.sdp ? CallManager.mungeOpusSdp(offer.sdp) : offer.sdp,
+    };
+    await this.pc!.setLocalDescription(mungedOffer);
 
     return JSON.stringify(this.pc!.localDescription);
   }
@@ -93,7 +98,12 @@ export class CallManager {
     await this.flushPendingCandidates();
 
     const answer = await this.pc!.createAnswer();
-    await this.pc!.setLocalDescription(answer);
+    // Munge SDP for better audio quality
+    const mungedAnswer = {
+      ...answer,
+      sdp: answer.sdp ? CallManager.mungeOpusSdp(answer.sdp) : answer.sdp,
+    };
+    await this.pc!.setLocalDescription(mungedAnswer);
 
     return JSON.stringify(this.pc!.localDescription);
   }
@@ -178,7 +188,16 @@ export class CallManager {
   private async acquireMedia(): Promise<void> {
     if (this.localStream) return;
     this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: {
+        // Echo/noise processing — critical for call quality
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        // Request high-quality audio capture
+        channelCount: 1,         // Mono is best for voice
+        sampleRate: 48000,       // Opus native rate
+        sampleSize: 16,          // 16-bit samples
+      },
       video: false,
     });
   }
@@ -262,5 +281,65 @@ export class CallManager {
       }
     }
     this.pendingCandidates = [];
+  }
+
+  /**
+   * Munge SDP to set Opus codec parameters for higher voice quality:
+   * - maxaveragebitrate: 48000 (48kbps — significantly higher than default ~32kbps)
+   * - useinbandfec=1: Forward error correction for packet loss resilience
+   * - usedtx=0: Disable discontinuous transmission to avoid audio gaps
+   * - stereo=0: Mono for voice (more efficient)
+   * - maxplaybackrate=48000: Full Opus sample rate
+   */
+  private static mungeOpusSdp(sdp: string): string {
+    const lines = sdp.split('\r\n');
+    const result: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      result.push(line);
+
+      // Find Opus fmtp lines and enhance them
+      if (line.startsWith('a=fmtp:') && i > 0) {
+        // Check if the corresponding rtpmap is opus
+        const payloadMatch = line.match(/^a=fmtp:(\d+)/);
+        if (payloadMatch) {
+          const pt = payloadMatch[1];
+          // Look for the rtpmap for this payload type
+          const rtpmapLine = lines.find(
+            (l) => l.startsWith(`a=rtpmap:${pt} `) && l.toLowerCase().includes('opus'),
+          );
+          if (rtpmapLine) {
+            // Replace the fmtp line we just pushed with enhanced params
+            const existingParams = line.substring(line.indexOf(' ') + 1);
+            const params = new Map<string, string>();
+
+            // Parse existing params
+            for (const param of existingParams.split(';')) {
+              const [key, val] = param.trim().split('=');
+              if (key && val !== undefined) {
+                params.set(key.trim(), val.trim());
+              }
+            }
+
+            // Set quality params
+            params.set('maxaveragebitrate', '48000');
+            params.set('useinbandfec', '1');
+            params.set('usedtx', '0');
+            params.set('stereo', '0');
+            params.set('maxplaybackrate', '48000');
+
+            const enhanced = `a=fmtp:${pt} ${Array.from(params.entries())
+              .map(([k, v]) => `${k}=${v}`)
+              .join(';')}`;
+
+            // Replace the last pushed line
+            result[result.length - 1] = enhanced;
+          }
+        }
+      }
+    }
+
+    return result.join('\r\n');
   }
 }
