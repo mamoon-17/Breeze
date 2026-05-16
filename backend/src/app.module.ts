@@ -16,6 +16,7 @@ import { ChatModule } from './modules/chat/chat.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { AiModule } from './modules/ai/ai.module';
+import { CallModule } from './modules/call/call.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { AiModule } from './modules/ai/ai.module';
     AuthModule,
     UserModule,
     AiModule,
+    CallModule,
   ],
   controllers: [AppController],
   providers: [AppService],

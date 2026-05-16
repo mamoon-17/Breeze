@@ -279,6 +279,27 @@ export class AppConfigService {
       : `https://${bucket}.s3.${region}.amazonaws.com`;
   }
 
+  // ─── TURN / ICE ────────────────────────────────────────────────────────────
+
+  /** TURN server URL (e.g. `turn:turn.example.com:3478`). Optional. */
+  get turnUrl(): string | undefined {
+    const v = this.configService.get<string>('TURN_URL')?.trim();
+    return v ? v : undefined;
+  }
+
+  /** Shared secret for coturn HMAC-based credential generation. Optional. */
+  get turnSecret(): string | undefined {
+    const v = this.configService.get<string>('TURN_SECRET')?.trim();
+    return v ? v : undefined;
+  }
+
+  /** TTL in seconds for ICE server credentials. Default: 3600 (1 hour). */
+  get iceServersTtlSeconds(): number {
+    return (
+      Number(this.configService.get<string>('ICE_SERVERS_TTL_SECONDS')) || 3600
+    );
+  }
+
   /**
    * Get required env var with Result type
    * Returns Result<string, AppError> instead of throwing

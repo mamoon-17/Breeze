@@ -8,6 +8,8 @@ import {
 
 import appCss from "../styles.css?url";
 import { AuthProvider } from "@/lib/breeze/auth-context";
+import { CallProvider } from "@/lib/breeze/call-context";
+import { CallOverlay } from "@/components/call/CallOverlay";
 import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
@@ -82,8 +84,12 @@ function RootShell({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   return (
     <AuthProvider>
-      <Outlet />
+      <CallProvider>
+        <Outlet />
+        <CallOverlay />
+      </CallProvider>
       <Toaster />
     </AuthProvider>
   );
 }
+

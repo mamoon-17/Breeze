@@ -10,6 +10,8 @@ import type {
   ChatMessage,
   ConversationInvitation,
   SessionFamily,
+  CallRecord,
+  IceServersResponse,
 } from "./types";
 
 const REFRESH_KEY = "breeze.refreshToken";
@@ -450,4 +452,14 @@ export const Ai = {
       body: payload,
     }),
   messageWriterStatus: (jobId: string) => api<AiMessageWriterJob>(`/ai/message-writer/${jobId}`),
+};
+
+export const Calls = {
+  iceServers: () => api<IceServersResponse>("/call/ice-servers"),
+  history: (page = 1, limit = 20) => {
+    const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
+    return api<{ records: CallRecord[]; total: number; page: number; limit: number }>(
+      `/call/history?${qs.toString()}`,
+    );
+  },
 };
