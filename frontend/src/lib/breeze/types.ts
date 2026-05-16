@@ -277,3 +277,30 @@ export interface IceServersResponse {
   iceServers: RTCIceServer[];
   ttlSeconds: number;
 }
+
+export interface WsReminderQueued {
+  jobId: string;
+  scheduledAt: string;
+  messageBody: string;
+  confirmationText: string;
+  recipients: {
+    allConversations?: boolean;
+    conversationNames?: string[];
+    emails?: string[];
+  };
+}
+
+export interface WsReminderSent {
+  jobId: string;
+  status: string;
+  results: Array<{
+    conversationId?: string;
+    conversationName?: string | null;
+    recipientUserId?: string;
+    recipientEmail?: string;
+    draft?: string;
+    messageId?: string;
+    error?: string;
+  }> | null;
+  errorMessage: string | null;
+}

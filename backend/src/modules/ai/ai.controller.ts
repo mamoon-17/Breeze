@@ -9,6 +9,9 @@ import {
   HttpStatus,
   Get,
   Param,
+  Query,
+  Delete,
+  Patch,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AiService } from './ai.service';
@@ -25,6 +28,14 @@ import {
   buildIntentUserPrompt,
   intentSystemPrompt,
 } from './prompts/intent.prompts';
+import { ReminderService } from './reminder.service';
+import { CreateReminderDto } from './dto/schedule-reminder.dto';
+import type { ReminderParseResult } from './dto/schedule-reminder.dto';
+import { ReminderJob } from './reminder-job.entity';
+import {
+  ZenChatMessageDto,
+  ZenPatchZenMessageDto,
+} from './dto/zen-chat-message.dto';
 
 const BREEZE_ASSISTANT_SYSTEM = `You are Breeze Assistant, a helpful AI inside a chat app. You help users rephrase messages, suggest replies, and improve their communication. Be concise.`;
 
@@ -35,7 +46,77 @@ export class AiController {
   constructor(
     private readonly aiService: AiService,
     private readonly aiMessageWriterService: AiMessageWriterService,
+    private readonly reminderService: ReminderService,
   ) {}
+
+  @Get('memory')
+  @UseGuards(JwtAuthGuard)
+  async memory(
+    @Request() req: { user: { id: string } },
+  ): Promise<{ memory: string }> {
+    const memory = await this.aiService.getUserMemory(req.user.id);
+    return { memory };
+  }
+
+  // ─── Zen AI Chat History (persisted) ───────────────────────────────────────
+
+  @Get('zen/history')
+  @UseGuards(JwtAuthGuard)
+  async zenHistory(
+    @Request() req: { user: { id: string } },
+    @Query('limit') limit?: string,
+  ): Promise<{
+    messages: {
+      id: string;
+      role: 'user' | 'assistant';
+      kind: 'chat' | 'status' | 'reminder_confirm';
+      content: string;
+      meta: Record<string, unknown> | null;
+    }[];
+  }> {
+    const n = Math.max(1, Math.min(500, Number(limit ?? 200) || 200));
+    const messages = await this.aiService.getZenChatHistory(req.user.id, n);
+    return { messages };
+  }
+
+  @Post('zen/history')
+  @UseGuards(JwtAuthGuard)
+  async appendZenHistory(
+    @Request() req: { user: { id: string } },
+    @Body() dto: ZenChatMessageDto,
+  ): Promise<{ id: string }> {
+    return this.aiService.appendZenChatMessage(
+      req.user.id,
+      dto.role,
+      dto.content,
+      dto.kind ?? 'chat',
+      dto.meta ?? null,
+    );
+  }
+
+  @Patch('zen/history/:id')
+  @UseGuards(JwtAuthGuard)
+  async patchZenHistory(
+    @Param('id') id: string,
+    @Request() req: { user: { id: string } },
+    @Body() dto: ZenPatchZenMessageDto,
+  ): Promise<{ ok: true }> {
+    await this.aiService.patchZenChatMessageMeta(
+      req.user.id,
+      id,
+      dto.metaPatch,
+    );
+    return { ok: true };
+  }
+
+  @Delete('zen/history')
+  @UseGuards(JwtAuthGuard)
+  async clearZenHistory(
+    @Request() req: { user: { id: string } },
+  ): Promise<{ ok: true }> {
+    await this.aiService.clearZenChatHistory(req.user.id);
+    return { ok: true };
+  }
 
   @Post('enhance')
   @UseGuards(JwtAuthGuard)
@@ -71,12 +152,23 @@ export class AiController {
       `User ${req.user.id} AI chat — ${dto.messages.length} messages`,
     );
     try {
+      const memory = await this.aiService.getUserMemory(req.user.id);
+
       // Prepend the system prompt so every conversation has the assistant context
       const messagesWithSystem: {
         role: 'system' | 'user' | 'assistant';
         content: string;
       }[] = [
         { role: 'system', content: BREEZE_ASSISTANT_SYSTEM },
+        ...(memory
+          ? [
+              {
+                role: 'system' as const,
+                content:
+                  `User memory (applies across all chats; use only when relevant):\n${memory}`.trim(),
+              },
+            ]
+          : []),
         ...dto.messages,
       ];
       const reply = await this.aiService.chat(messagesWithSystem);
@@ -145,12 +237,67 @@ export class AiController {
     return this.aiMessageWriterService.getJob(jobId, req.user.id);
   }
 
+  // ─── Reminder Endpoints ───────────────────────────────────────────────────
+
+  @Post('reminder')
+  @UseGuards(JwtAuthGuard)
+  async createReminder(
+    @Body() dto: CreateReminderDto,
+    @Request() req: { user: { id: string } },
+  ): Promise<ReminderParseResult> {
+    this.logger.log(`User ${req.user.id} creating reminder`);
+    const timezone = dto.timezone || 'UTC';
+    return this.reminderService.parseAndCreate(
+      dto.instruction,
+      req.user.id,
+      timezone,
+    );
+  }
+
+  @Post('reminder/:id/confirm')
+  @UseGuards(JwtAuthGuard)
+  async confirmReminder(
+    @Param('id') id: string,
+    @Request() req: { user: { id: string } },
+  ): Promise<{ jobId: string; status: string }> {
+    const job = await this.reminderService.confirm(id, req.user.id);
+    return { jobId: job.id, status: job.status };
+  }
+
+  @Post('reminder/:id/cancel')
+  @UseGuards(JwtAuthGuard)
+  async cancelReminder(
+    @Param('id') id: string,
+    @Request() req: { user: { id: string } },
+  ): Promise<{ jobId: string; status: string }> {
+    const job = await this.reminderService.cancel(id, req.user.id);
+    return { jobId: job.id, status: job.status };
+  }
+
+  @Get('reminders')
+  @UseGuards(JwtAuthGuard)
+  async listReminders(
+    @Request() req: { user: { id: string } },
+  ): Promise<{ reminders: ReminderJob[] }> {
+    const reminders = await this.reminderService.getRemindersForUser(
+      req.user.id,
+    );
+    return { reminders };
+  }
+
+  // ─── Private ──────────────────────────────────────────────────────────────
+
   private normalizeIntent(raw: string, fallbackText: string): AiIntentResult {
     try {
       const parsed = JSON.parse(raw) as Partial<AiIntentResult> & {
         recipients?: { [key: string]: unknown };
       };
-      const action = parsed.action === 'send_message' ? 'send_message' : 'chat';
+      const action =
+        parsed.action === 'send_message'
+          ? 'send_message'
+          : parsed.action === 'schedule_reminder'
+            ? 'schedule_reminder'
+            : 'chat';
       const confidence = this.toConfidence(parsed.confidence);
 
       if (action === 'chat') {
@@ -174,7 +321,7 @@ export class AiController {
         return { action: 'chat', confidence: Math.min(confidence, 0.3) };
       }
 
-      return {
+      const result: AiIntentResult = {
         action,
         instruction,
         recipients: {
@@ -184,6 +331,24 @@ export class AiController {
         },
         confidence,
       };
+
+      // Carry schedule-specific fields for reminder intents
+      if (action === 'schedule_reminder') {
+        if (
+          typeof parsed.scheduledTime === 'string' &&
+          parsed.scheduledTime.trim()
+        ) {
+          result.scheduledTime = parsed.scheduledTime.trim();
+        }
+        if (
+          typeof parsed.messageBody === 'string' &&
+          parsed.messageBody.trim()
+        ) {
+          result.messageBody = parsed.messageBody.trim();
+        }
+      }
+
+      return result;
     } catch (error) {
       this.logger.error('AI intent parse error — raw response:', raw);
       return { action: 'chat', confidence: 0 };

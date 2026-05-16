@@ -29,6 +29,8 @@ import type {
   WsCallBusy,
   WsCallMissed,
   WsCallError,
+  WsReminderQueued,
+  WsReminderSent,
 } from "./types";
 
 let socket: Socket | null = null;
@@ -52,7 +54,6 @@ export interface BreezeServerEvents {
   invitationUpdated: (evt: WsInvitationUpdated) => void;
   memberAdded: (evt: WsMemberAdded) => void;
   conversationCreated: (evt: WsConversationCreated) => void;
-  // Call events
   "call:incoming": (evt: WsCallIncoming) => void;
   "call:answered": (evt: WsCallAnswered) => void;
   "call:ice-candidate": (evt: WsCallIceCandidate) => void;
@@ -60,6 +61,8 @@ export interface BreezeServerEvents {
   "call:busy": (evt: WsCallBusy) => void;
   "call:missed": (evt: WsCallMissed) => void;
   "call:error": (evt: WsCallError) => void;
+  "reminder:queued": (evt: WsReminderQueued) => void;
+  "reminder:sent": (evt: WsReminderSent) => void;
 }
 
 function clearProactiveRefresh() {
