@@ -6,6 +6,8 @@ import { CallRecord } from './call-record.entity';
 import { CallSessionMap, type CallSession } from './call-session.map';
 import { SocketStateService } from '../socket/socket-state.service';
 import { ConversationService } from '../conversation/conversation.service';
+import { ChatService } from '../chat/chat.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   CallServerEvents,
   CallErrorCodes,
@@ -24,6 +26,8 @@ export class CallService {
     private readonly sessionMap: CallSessionMap,
     private readonly socketState: SocketStateService,
     private readonly conversationService: ConversationService,
+    private readonly chatService: ChatService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ─── Initiate ──────────────────────────────────────────────────────────────
@@ -304,9 +308,86 @@ export class CallService {
     // Remove from maps
     this.sessionMap.delete(callId);
 
+    // Insert system message in the conversation thread
+    try {
+      const content = this.buildSystemMessageContent(outcome, durationSeconds);
+      await this.chatService.insertSystemMessage({
+        room: session.conversationId,
+        senderId: session.callerId,
+        subtype: 'call',
+        content,
+        metadata: {
+          callId,
+          outcome,
+          durationSeconds,
+          callerId: session.callerId,
+          calleeId: session.calleeId,
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to insert system message for call ${callId}`,
+        err,
+      );
+    }
+
+    // Send missed-call push notification to callee
+    if (outcome === 'missed') {
+      try {
+        await this.notificationsService.sendMissedCallPush(
+          session.calleeId,
+          {
+            type: 'missed_call',
+            room: session.conversationId,
+            callId,
+          },
+        );
+      } catch (err) {
+        this.logger.error(
+          `Failed to send missed-call push for call ${callId}`,
+          err,
+        );
+      }
+    }
+
     this.logger.log(
       `Call ended: ${callId} outcome=${outcome} duration=${durationSeconds ?? 'n/a'}s`,
     );
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+
+  private buildSystemMessageContent(
+    outcome: CallOutcome,
+    durationSeconds: number | null,
+  ): string {
+    const durationStr = durationSeconds
+      ? this.formatDuration(durationSeconds)
+      : null;
+
+    switch (outcome) {
+      case 'completed':
+        return `Voice call · ${durationStr ?? '0s'}`;
+      case 'missed':
+        return 'Missed voice call';
+      case 'rejected':
+        return 'Declined voice call';
+      case 'cancelled':
+        return 'Cancelled voice call';
+      case 'failed':
+        return 'Voice call failed';
+      case 'busy':
+        return 'Voice call — busy';
+      default:
+        return 'Voice call';
+    }
+  }
+
+  private formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m === 0) return `${s}s`;
+    return `${m}m ${s.toString().padStart(2, '0')}s`;
   }
 
   // ─── Call history ──────────────────────────────────────────────────────────

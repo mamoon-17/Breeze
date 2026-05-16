@@ -70,6 +70,7 @@ export function CallOverlay() {
     cancelCall,
     endCall,
     toggleMute,
+    hideOverlay,
   } = useCall();
   const { user } = useAuth();
 
@@ -95,42 +96,67 @@ export function CallOverlay() {
     };
   }, [callState, answeredAt]);
 
-  // Simple ringtone using Web Audio API (plays during incoming state)
-  const ringOscillatorRef = useRef<{ osc: OscillatorNode; ctx: AudioContext } | null>(null);
+  // Ringtone: two-tone alternating sine wave for more pleasant sound
+  const ringOscillatorRef = useRef<{ oscs: OscillatorNode[]; ctx: AudioContext } | null>(null);
 
   useEffect(() => {
     if (callState === "incoming") {
+      // Vibrate on mobile
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate([300, 200, 300, 200, 300]);
+        }
+      } catch {
+        // ignore
+      }
+
       try {
         const ctx = new AudioContext();
-        const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = 440;
-        gain.gain.value = 0.15;
-        osc.connect(gain);
+        gain.gain.value = 0;
         gain.connect(ctx.destination);
-        osc.start();
 
-        // Pulse on/off
+        const osc1 = ctx.createOscillator();
+        osc1.type = "sine";
+        osc1.frequency.value = 440;
+        osc1.connect(gain);
+
+        const osc2 = ctx.createOscillator();
+        osc2.type = "sine";
+        osc2.frequency.value = 523.25;
+        osc2.connect(gain);
+
+        osc1.start();
+        osc2.start();
+
+        let isHigh = false;
         const pulseInterval = setInterval(() => {
-          gain.gain.value = gain.gain.value > 0 ? 0 : 0.15;
-        }, 800);
+          isHigh = !isHigh;
+          gain.gain.setTargetAtTime(isHigh ? 0.12 : 0, ctx.currentTime, 0.05);
+          // Switch between two tones for a pleasant ring
+          osc1.frequency.setTargetAtTime(isHigh ? 440 : 0.001, ctx.currentTime, 0.01);
+          osc2.frequency.setTargetAtTime(isHigh ? 0.001 : 523.25, ctx.currentTime, 0.01);
+        }, 600);
 
-        ringOscillatorRef.current = { osc, ctx };
+        ringOscillatorRef.current = { oscs: [osc1, osc2], ctx };
 
         return () => {
           clearInterval(pulseInterval);
-          osc.stop();
+          osc1.stop();
+          osc2.stop();
           ctx.close();
           ringOscillatorRef.current = null;
+          // Stop vibration
+          try { navigator.vibrate?.(0); } catch { /* ignore */ }
         };
       } catch {
         // Audio not available
       }
     } else if (ringOscillatorRef.current) {
-      ringOscillatorRef.current.osc.stop();
+      ringOscillatorRef.current.oscs.forEach((o) => { try { o.stop(); } catch { /* ignore */ } });
       ringOscillatorRef.current.ctx.close();
       ringOscillatorRef.current = null;
+      try { navigator.vibrate?.(0); } catch { /* ignore */ }
     }
   }, [callState]);
 
@@ -269,6 +295,19 @@ export function CallOverlay() {
                 style={{ background: "linear-gradient(135deg, #ff4757, #c0392b)" }}
               >
                 <PhoneOffIcon className="size-6 text-white" />
+              </button>
+              <button
+                className="call-btn-sm"
+                onClick={hideOverlay}
+                aria-label="Minimize"
+                title="Continue browsing"
+              >
+                <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 14 10 14 10 20" />
+                  <polyline points="20 10 14 10 14 4" />
+                  <line x1="14" y1="10" x2="21" y2="3" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
               </button>
             </>
           )}

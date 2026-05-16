@@ -99,6 +99,12 @@ export interface ChatMessage {
    * echo. Never persisted and never sent over the wire.
    */
   optimistic?: boolean;
+  /** 'user' for normal messages, 'system' for call events etc. Defaults to 'user'. */
+  messageType?: "user" | "system" | string;
+  /** Sub-classification for system messages, e.g. 'call'. */
+  subtype?: string | null;
+  /** Arbitrary JSON metadata for system messages (call outcome, duration, etc.). */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface SessionFamily {

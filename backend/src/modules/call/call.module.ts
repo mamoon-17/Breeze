@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppConfigModule } from '../../config/app-config.module';
@@ -6,6 +6,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { AuthModule } from '../auth/auth.module';
 import { UserModule } from '../user/user.module';
 import { ConversationModule } from '../conversation/conversation.module';
+import { ChatModule } from '../chat/chat.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 import { CallGateway } from './call.gateway';
@@ -20,6 +21,7 @@ import { CallRecord } from './call-record.entity';
     AuthModule,
     UserModule,
     ConversationModule,
+    forwardRef(() => ChatModule),
     NotificationsModule,
     TypeOrmModule.forFeature([CallRecord]),
     JwtModule.registerAsync({
