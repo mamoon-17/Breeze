@@ -363,4 +363,34 @@ export class ChatService {
       unreadCount: Number(r.unreadCount) || 0,
     }));
   }
+
+  /**
+   * Insert a system message (e.g. call event) into a conversation.
+   * No receipts are created for system messages.
+   * The message is broadcast to the room so all connected clients see it live.
+   */
+  async insertSystemMessage(opts: {
+    room: string;
+    senderId: string;
+    subtype: string;
+    content: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<ChatMessage> {
+    const msg = this.chatMessageRepository.create({
+      room: opts.room,
+      senderId: opts.senderId,
+      message: opts.content,
+      messageType: 'system',
+      subtype: opts.subtype,
+      metadata: opts.metadata ?? null,
+      sentAt: new Date(),
+    });
+    const saved = await this.chatMessageRepository.save(msg);
+
+    // Broadcast to conversation so threads update live
+    this.socketState.emitToRoom(opts.room, 'newMessage', saved);
+
+    return saved;
+  }
 }
+

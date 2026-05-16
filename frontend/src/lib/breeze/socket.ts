@@ -22,6 +22,13 @@ import type {
   WsUserOffline,
   WsTyping,
   WsAuthExpired,
+  WsCallIncoming,
+  WsCallAnswered,
+  WsCallIceCandidate,
+  WsCallEnded,
+  WsCallBusy,
+  WsCallMissed,
+  WsCallError,
   WsReminderQueued,
   WsReminderSent,
 } from "./types";
@@ -47,6 +54,13 @@ export interface BreezeServerEvents {
   invitationUpdated: (evt: WsInvitationUpdated) => void;
   memberAdded: (evt: WsMemberAdded) => void;
   conversationCreated: (evt: WsConversationCreated) => void;
+  "call:incoming": (evt: WsCallIncoming) => void;
+  "call:answered": (evt: WsCallAnswered) => void;
+  "call:ice-candidate": (evt: WsCallIceCandidate) => void;
+  "call:ended": (evt: WsCallEnded) => void;
+  "call:busy": (evt: WsCallBusy) => void;
+  "call:missed": (evt: WsCallMissed) => void;
+  "call:error": (evt: WsCallError) => void;
   "reminder:queued": (evt: WsReminderQueued) => void;
   "reminder:sent": (evt: WsReminderSent) => void;
 }
@@ -228,4 +242,52 @@ export function getPresence(conversationId: string): Promise<string[]> {
       },
     );
   });
+}
+
+// ─── Call emit helpers ─────────────────────────────────────────────────────
+
+export function emitCallInitiate(
+  conversationId: string,
+  calleeId: string,
+  offer: string,
+) {
+  return new Promise<{ callId?: string; error?: string }>((resolve) => {
+    const timer = setTimeout(() => resolve({ error: "timeout" }), 10_000);
+    getSocket().emit(
+      "call:initiate",
+      { conversationId, calleeId, offer },
+      (response: { callId?: string; error?: string }) => {
+        clearTimeout(timer);
+        resolve(response ?? { error: "no_response" });
+      },
+    );
+  });
+}
+
+export function emitCallAccept(callId: string) {
+  getSocket().emit("call:accept", { callId });
+}
+
+export function emitCallAnswer(callId: string, answer: string) {
+  getSocket().emit("call:answer", { callId, answer });
+}
+
+export function emitCallIceCandidate(callId: string, candidate: string) {
+  getSocket().emit("call:ice-candidate", { callId, candidate });
+}
+
+export function emitCallReject(callId: string) {
+  getSocket().emit("call:reject", { callId });
+}
+
+export function emitCallCancel(callId: string) {
+  getSocket().emit("call:cancel", { callId });
+}
+
+export function emitCallEnd(callId: string) {
+  getSocket().emit("call:end", { callId });
+}
+
+export function emitCallIceFailed(callId: string) {
+  getSocket().emit("call:ice-failed", { callId });
 }

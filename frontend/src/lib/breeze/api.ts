@@ -10,6 +10,8 @@ import type {
   ChatMessage,
   ConversationInvitation,
   SessionFamily,
+  CallRecord,
+  IceServersResponse,
 } from "./types";
 
 const REFRESH_KEY = "breeze.refreshToken";
@@ -526,3 +528,13 @@ export interface ReminderJobSummary {
   errorMessage: string | null;
   createdAt: string;
 }
+
+export const Calls = {
+  iceServers: () => api<IceServersResponse>("/call/ice-servers"),
+  history: (page = 1, limit = 20) => {
+    const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
+    return api<{ records: CallRecord[]; total: number; page: number; limit: number }>(
+      `/call/history?${qs.toString()}`,
+    );
+  },
+};

@@ -85,5 +85,21 @@ export class NotificationsService {
       }),
     );
   }
+
+  /**
+   * Send a missed-call push notification to a user.
+   * Reuses the same web-push infrastructure as new-message notifications.
+   */
+  async sendMissedCallPush(
+    userId: string,
+    payload: {
+      type: 'missed_call';
+      room: string;
+      callId: string;
+      callerName?: string;
+    },
+  ): Promise<void> {
+    await this.notifyNewMessage(userId, payload);
+  }
 }
 

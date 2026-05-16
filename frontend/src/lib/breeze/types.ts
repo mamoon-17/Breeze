@@ -99,6 +99,12 @@ export interface ChatMessage {
    * echo. Never persisted and never sent over the wire.
    */
   optimistic?: boolean;
+  /** 'user' for normal messages, 'system' for call events etc. Defaults to 'user'. */
+  messageType?: "user" | "system" | string;
+  /** Sub-classification for system messages, e.g. 'call'. */
+  subtype?: string | null;
+  /** Arbitrary JSON metadata for system messages (call outcome, duration, etc.). */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface SessionFamily {
@@ -203,6 +209,75 @@ export interface WsConversationCreated {
   createdAt: string;
 }
 
+// ─── Call Types ──────────────────────────────────────────────────────────────
+
+export type CallState = "idle" | "outgoing" | "incoming" | "active" | "ended";
+
+export type CallOutcome =
+  | "completed"
+  | "missed"
+  | "rejected"
+  | "cancelled"
+  | "failed"
+  | "busy";
+
+export interface WsCallIncoming {
+  callId: string;
+  conversationId: string;
+  callerId: string;
+  offer: string;
+}
+
+export interface WsCallAnswered {
+  callId: string;
+  answer: string;
+}
+
+export interface WsCallIceCandidate {
+  callId: string;
+  candidate: string;
+}
+
+export interface WsCallEnded {
+  callId: string;
+  conversationId: string;
+  outcome: CallOutcome;
+  durationSeconds: number | null;
+}
+
+export interface WsCallBusy {
+  calleeId: string;
+}
+
+export interface WsCallMissed {
+  callId: string;
+  calleeId: string;
+}
+
+export interface WsCallError {
+  code: string;
+  message: string;
+}
+
+export interface CallRecord {
+  id: string;
+  conversationId: string;
+  callerId: string;
+  calleeId: string;
+  callType: "voice";
+  outcome: CallOutcome;
+  durationSeconds: number | null;
+  startedAt: string;
+  answeredAt: string | null;
+  endedAt: string;
+  createdAt: string;
+}
+
+export interface IceServersResponse {
+  iceServers: RTCIceServer[];
+  ttlSeconds: number;
+}
+
 export interface WsReminderQueued {
   jobId: string;
   scheduledAt: string;
@@ -229,4 +304,3 @@ export interface WsReminderSent {
   }> | null;
   errorMessage: string | null;
 }
-

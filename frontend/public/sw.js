@@ -51,6 +51,16 @@ self.addEventListener("push", (event) => {
       data.url = `/app/${payload.room}`;
       data.room = payload.room;
     }
+  } else if (payload.type === "missed_call") {
+    title = "Missed call";
+    body = payload.callerName
+      ? `Missed call from ${payload.callerName}`
+      : "You missed a voice call";
+    tag = `breeze-missed-call-${payload.callId || "unknown"}`;
+    if (payload.room) {
+      data.url = `/app/${payload.room}`;
+      data.room = payload.room;
+    }
   } else if (typeof payload.title === "string") {
     title = payload.title;
     body = typeof payload.body === "string" ? payload.body : "";

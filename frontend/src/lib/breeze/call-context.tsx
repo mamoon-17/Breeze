@@ -1,0 +1,369 @@
+/**
+ * CallContext — global call state machine mounted inside AuthProvider.
+ *
+ * State machine: idle → outgoing | incoming → active → ended → idle
+ *
+ * Subscribes to all call:* server events; exposes actions for
+ * initiateCall, acceptCall, rejectCall, cancelCall, endCall.
+ */
+
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type ReactNode,
+} from "react";
+import { toast } from "sonner";
+import { Calls } from "./api";
+import { CallManager } from "./call-manager";
+import {
+  getSocket,
+  emitCallInitiate,
+  emitCallAccept,
+  emitCallAnswer,
+  emitCallReject,
+  emitCallCancel,
+  emitCallEnd,
+} from "./socket";
+import type {
+  CallState,
+  WsCallIncoming,
+  WsCallAnswered,
+  WsCallIceCandidate,
+  WsCallEnded,
+  WsCallBusy,
+  WsCallError,
+  IceServersResponse,
+} from "./types";
+
+interface CallContextValue {
+  callState: CallState;
+  callId: string | null;
+  conversationId: string | null;
+  peerId: string | null;
+  /** Resolved display name of the peer (from backend on incoming, from members on outgoing). */
+  peerName: string | null;
+  isMuted: boolean;
+  answeredAt: Date | null;
+  /** True when the active call overlay is visible (user can hide it to browse). */
+  overlayVisible: boolean;
+  initiateCall: (calleeId: string, conversationId: string, calleeName?: string) => Promise<void>;
+  acceptCall: () => Promise<void>;
+  rejectCall: () => void;
+  cancelCall: () => void;
+  endCall: () => void;
+  toggleMute: () => void;
+  showOverlay: () => void;
+  hideOverlay: () => void;
+}
+
+const CallContext = createContext<CallContextValue | null>(null);
+
+export function useCall(): CallContextValue {
+  const ctx = useContext(CallContext);
+  if (!ctx) throw new Error("useCall must be used within CallProvider");
+  return ctx;
+}
+
+// ICE server cache in sessionStorage
+const ICE_CACHE_KEY = "breeze.iceServers";
+
+function getCachedIce(): RTCIceServer[] | null {
+  try {
+    const raw = sessionStorage.getItem(ICE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { servers: RTCIceServer[]; expiresAt: number };
+    if (Date.now() > parsed.expiresAt) {
+      sessionStorage.removeItem(ICE_CACHE_KEY);
+      return null;
+    }
+    return parsed.servers;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedIce(data: IceServersResponse): void {
+  try {
+    sessionStorage.setItem(
+      ICE_CACHE_KEY,
+      JSON.stringify({
+        servers: data.iceServers,
+        expiresAt: Date.now() + data.ttlSeconds * 1000,
+      }),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+async function getIceServers(): Promise<RTCIceServer[]> {
+  const cached = getCachedIce();
+  if (cached) return cached;
+  try {
+    const data = await Calls.iceServers();
+    setCachedIce(data);
+    return data.iceServers;
+  } catch {
+    // Fallback to public STUN
+    return [{ urls: "stun:stun.l.google.com:19302" }];
+  }
+}
+
+export function CallProvider({ children }: { children: ReactNode }) {
+  const [callState, setCallState] = useState<CallState>("idle");
+  const [callId, setCallId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [peerId, setPeerId] = useState<string | null>(null);
+  const [peerName, setPeerName] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [answeredAt, setAnsweredAt] = useState<Date | null>(null);
+  const [overlayVisible, setOverlayVisible] = useState(false);
+
+  // Refs for the incoming offer SDP (needed when callee accepts)
+  const incomingOfferRef = useRef<string | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const callManagerRef = useRef(CallManager.getInstance());
+
+  // Set up remote audio element once
+  useEffect(() => {
+    const audio = new Audio();
+    audio.autoplay = true;
+    remoteAudioRef.current = audio;
+    return () => {
+      audio.pause();
+      audio.srcObject = null;
+    };
+  }, []);
+
+  // Setup CallManager callbacks
+  useEffect(() => {
+    callManagerRef.current.setCallbacks({
+      onStateChange: () => {
+        // CallManager state is separate from call flow state
+      },
+      onRemoteStream: (stream) => {
+        if (remoteAudioRef.current) {
+          remoteAudioRef.current.srcObject = stream;
+        }
+      },
+    });
+  }, []);
+
+  const reset = useCallback(() => {
+    callManagerRef.current.cleanup();
+    setCallState("idle");
+    setCallId(null);
+    setConversationId(null);
+    setPeerId(null);
+    setPeerName(null);
+    setIsMuted(false);
+    setAnsweredAt(null);
+    setOverlayVisible(false);
+    incomingOfferRef.current = null;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = null;
+    }
+  }, []);
+
+  // ─── Socket event subscriptions ──────────────────────────────────────
+
+  useEffect(() => {
+    const socket = getSocket();
+
+    const onIncoming = (evt: WsCallIncoming) => {
+      // If already in a call, ignore (server handles busy)
+      if (callState !== "idle") return;
+      setCallId(evt.callId);
+      setConversationId(evt.conversationId);
+      setPeerId(evt.callerId);
+      setPeerName((evt as WsCallIncoming & { callerName?: string }).callerName ?? null);
+      setCallState("incoming");
+      setOverlayVisible(true);
+      incomingOfferRef.current = evt.offer;
+    };
+
+    const onAnswered = async (evt: WsCallAnswered) => {
+      try {
+        await callManagerRef.current.setRemoteAnswer(evt.answer);
+        setCallState("active");
+        setAnsweredAt(new Date());
+      } catch (err) {
+        console.error("[CallContext] Failed to set remote answer:", err);
+        toast.error("Call connection failed");
+        reset();
+      }
+    };
+
+    const onIceCandidate = (evt: WsCallIceCandidate) => {
+      callManagerRef.current.addIceCandidate(evt.candidate);
+    };
+
+    const onEnded = (evt: WsCallEnded) => {
+      if (evt.callId !== callId && callId !== null) return;
+      // Show brief "ended" state before resetting
+      setCallState("ended");
+      setTimeout(() => reset(), 1500);
+    };
+
+    const onBusy = (_evt: WsCallBusy) => {
+      toast.info("User is busy on another call");
+      reset();
+    };
+
+    const onError = (evt: WsCallError) => {
+      const messages: Record<string, string> = {
+        CANNOT_CALL_SELF: "You can't call yourself",
+        NOT_DM: "Voice calls are only available in DMs",
+        NOT_MEMBER: "You're not a member of this conversation",
+        ALREADY_IN_CALL: "You're already in a call",
+      };
+      toast.error(messages[evt.code] ?? evt.message ?? "Call error");
+      reset();
+    };
+
+    socket.on("call:incoming", onIncoming);
+    socket.on("call:answered", onAnswered);
+    socket.on("call:ice-candidate", onIceCandidate);
+    socket.on("call:ended", onEnded);
+    socket.on("call:busy", onBusy);
+    socket.on("call:missed", () => {
+      if (callState === "outgoing") {
+        toast.info("No answer");
+        reset();
+      }
+    });
+    socket.on("call:error", onError);
+
+    return () => {
+      socket.off("call:incoming", onIncoming);
+      socket.off("call:answered", onAnswered);
+      socket.off("call:ice-candidate", onIceCandidate);
+      socket.off("call:ended", onEnded);
+      socket.off("call:busy", onBusy);
+      socket.off("call:missed");
+      socket.off("call:error", onError);
+    };
+    // We intentionally re-subscribe when callState/callId change so our closures
+    // see current values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callState, callId, reset]);
+
+  // ─── Actions ──────────────────────────────────────────────────────────
+
+  const initiateCall = useCallback(
+    async (calleeId: string, convId: string, calleeName?: string) => {
+      if (callState !== "idle") {
+        toast.error("You're already in a call");
+        return;
+      }
+
+      try {
+        const iceServers = await getIceServers();
+        const mgr = callManagerRef.current;
+
+        // We need a temporary callId for the manager — server will confirm it
+        const tempCallId = crypto.randomUUID();
+        const offerSdp = await mgr.createOffer(tempCallId, iceServers);
+
+        setCallState("outgoing");
+        setConversationId(convId);
+        setPeerId(calleeId);
+        setPeerName(calleeName ?? null);
+        setOverlayVisible(true);
+
+        const result = await emitCallInitiate(convId, calleeId, offerSdp);
+        if (result.error || !result.callId) {
+          // Server rejected — cleanup
+          mgr.cleanup();
+          reset();
+          return;
+        }
+
+        setCallId(result.callId);
+      } catch (err) {
+        console.error("[CallContext] Failed to initiate call:", err);
+        toast.error("Could not start call");
+        reset();
+      }
+    },
+    [callState, reset],
+  );
+
+  const acceptCall = useCallback(async () => {
+    if (callState !== "incoming" || !callId) return;
+
+    try {
+      const iceServers = await getIceServers();
+      const mgr = callManagerRef.current;
+
+      emitCallAccept(callId);
+
+      const answerSdp = await mgr.createAnswer(
+        callId,
+        incomingOfferRef.current!,
+        iceServers,
+      );
+      emitCallAnswer(callId, answerSdp);
+
+      setCallState("active");
+      setAnsweredAt(new Date());
+    } catch (err) {
+      console.error("[CallContext] Failed to accept call:", err);
+      toast.error("Could not accept call");
+      reset();
+    }
+  }, [callState, callId, reset]);
+
+  const rejectCall = useCallback(() => {
+    if (callId) emitCallReject(callId);
+    reset();
+  }, [callId, reset]);
+
+  const cancelCall = useCallback(() => {
+    if (callId) emitCallCancel(callId);
+    reset();
+  }, [callId, reset]);
+
+  const endCall = useCallback(() => {
+    if (callId) emitCallEnd(callId);
+    setCallState("ended");
+    setTimeout(() => reset(), 1500);
+  }, [callId, reset]);
+
+  const toggleMute = useCallback(() => {
+    const muted = callManagerRef.current.toggleMute();
+    setIsMuted(muted);
+  }, []);
+
+  const showOverlay = useCallback(() => setOverlayVisible(true), []);
+  const hideOverlay = useCallback(() => setOverlayVisible(false), []);
+
+  return (
+    <CallContext.Provider
+      value={{
+        callState,
+        callId,
+        conversationId,
+        peerId,
+        peerName,
+        isMuted,
+        answeredAt,
+        overlayVisible,
+        initiateCall,
+        acceptCall,
+        rejectCall,
+        cancelCall,
+        endCall,
+        toggleMute,
+        showOverlay,
+        hideOverlay,
+      }}
+    >
+      {children}
+    </CallContext.Provider>
+  );
+}
