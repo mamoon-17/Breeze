@@ -6,7 +6,7 @@ import {
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/breeze/auth-context";
-import { getRefreshToken } from "@/lib/breeze/api";
+import { getRefreshToken, setTokens } from "@/lib/breeze/api";
 
 export const Route = createFileRoute("/_authenticated")({
   component: AuthLayout,
@@ -30,20 +30,35 @@ function AuthLayout() {
   // `!refreshToken` guard, a freshly-landed page would flash guest before
   // /auth/me returns, which would eject a just-signed-in user.
   //
-  // The socket layer handles its own mid-session re-auth (see
-  // `frontend/src/lib/breeze/socket.ts`): on an `authExpired` event or an
-  // auth-shaped `connect_error`, it tries to refresh once; if that fails,
-  // `setTokens(null)` fires and auth-context flips to guest — which lands
-  // us here. That's when `wasAuthenticated.current` tells us to show the
-  // "session expired" toast instead of a silent redirect.
+  // Also handles the case where the refresh token is stale in localStorage
+  // but /auth/me returned 401 and the refresh endpoint also failed. In that
+  // scenario status flips to "guest" but the stale refresh token may still
+  // sit in localStorage, so we clear it explicitly.
   useEffect(() => {
-    if (status === "guest" && !getRefreshToken()) {
+    if (status === "guest") {
+      // Clear any stale refresh token still in localStorage
+      if (getRefreshToken()) {
+        setTokens(null);
+      }
       if (wasAuthenticated.current) {
         toast.error("Your session expired — please sign in again");
       }
       navigate({ to: "/" });
     }
   }, [status, navigate]);
+
+  // Safety net: if auth stays "loading" for more than 8 seconds, the refresh
+  // is probably dead. Force-clear and redirect so the user isn't stuck on an
+  // infinite spinner wondering why the app "isn't working".
+  useEffect(() => {
+    if (status !== "loading") return;
+    const timer = setTimeout(() => {
+      if (getRefreshToken()) {
+        setTokens(null); // triggers onTokensChange → guest
+      }
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   if (status === "loading" || status === "guest") {
     return (

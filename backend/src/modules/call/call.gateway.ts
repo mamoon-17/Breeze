@@ -53,14 +53,29 @@ export class CallGateway implements OnGatewayInit, OnGatewayDisconnect {
     this.logger.log('CallGateway initialised');
   }
 
+  private disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   handleDisconnect(client: AuthenticatedSocket) {
     const userId = client.data.user?.id;
     if (!userId) return;
 
-    // Only fire disconnect logic when the user has NO other sockets left.
-    // If they still have other tabs open, we should not end the call.
+    // When a user refreshes their browser, the socket disconnects and
+    // reconnects within ~1-2 seconds.  Without a grace period, the call
+    // would be killed every time the callee hits F5.  We delay 3 seconds
+    // and then re-check — if they're back online, we leave the call alone.
     if (!this.socketState.isUserOnline(userId)) {
-      this.callService.onUserDisconnect(userId);
+      // Clear any existing timer (shouldn't happen, but be safe)
+      const existing = this.disconnectTimers.get(userId);
+      if (existing) clearTimeout(existing);
+
+      const timer = setTimeout(() => {
+        this.disconnectTimers.delete(userId);
+        // Re-check: if the user reconnected within the grace window, skip.
+        if (this.socketState.isUserOnline(userId)) return;
+        this.callService.onUserDisconnect(userId);
+      }, 3000);
+
+      this.disconnectTimers.set(userId, timer);
     }
   }
 

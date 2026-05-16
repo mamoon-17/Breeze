@@ -285,11 +285,13 @@ export class CallManager {
 
   /**
    * Munge SDP to set Opus codec parameters for higher voice quality:
-   * - maxaveragebitrate: 48000 (48kbps — significantly higher than default ~32kbps)
+   * - maxaveragebitrate: 64000 (64kbps — double the ~32kbps default)
    * - useinbandfec=1: Forward error correction for packet loss resilience
    * - usedtx=0: Disable discontinuous transmission to avoid audio gaps
    * - stereo=0: Mono for voice (more efficient)
    * - maxplaybackrate=48000: Full Opus sample rate
+   * - cbr=0: Allow variable bitrate for better quality
+   * - ptime=60: 60ms audio frames for less packet overhead & fewer cut-offs
    */
   private static mungeOpusSdp(sdp: string): string {
     const lines = sdp.split('\r\n');
@@ -323,11 +325,13 @@ export class CallManager {
             }
 
             // Set quality params
-            params.set('maxaveragebitrate', '48000');
+            params.set('maxaveragebitrate', '64000');
             params.set('useinbandfec', '1');
             params.set('usedtx', '0');
             params.set('stereo', '0');
             params.set('maxplaybackrate', '48000');
+            params.set('cbr', '0');
+            params.set('ptime', '60');
 
             const enhanced = `a=fmtp:${pt} ${Array.from(params.entries())
               .map(([k, v]) => `${k}=${v}`)
