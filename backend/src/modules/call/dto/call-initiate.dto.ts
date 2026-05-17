@@ -1,4 +1,10 @@
-import { IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CallInitiateDto {
   @IsUUID()
@@ -12,4 +18,8 @@ export class CallInitiateDto {
   @IsString()
   @IsNotEmpty()
   offer: string; // JSON-stringified RTCSessionDescription
+
+  @IsOptional()
+  @IsIn(['audio', 'video'])
+  type?: 'audio' | 'video';
 }

@@ -250,12 +250,13 @@ export function emitCallInitiate(
   conversationId: string,
   calleeId: string,
   offer: string,
+  type: "audio" | "video" = "audio",
 ) {
   return new Promise<{ callId?: string; error?: string }>((resolve) => {
     const timer = setTimeout(() => resolve({ error: "timeout" }), 10_000);
     getSocket().emit(
       "call:initiate",
-      { conversationId, calleeId, offer },
+      { conversationId, calleeId, offer, type },
       (response: { callId?: string; error?: string }) => {
         clearTimeout(timer);
         resolve(response ?? { error: "no_response" });

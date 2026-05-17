@@ -152,18 +152,10 @@ export interface WsMessageDeleted {
 }
 
 export interface WsAuthExpired {
-  reason:
-    | "access_token_revoked"
-    | "refresh_session_invalid"
-    | "session_validation_failed"
-    | string;
+  reason: "access_token_revoked" | "refresh_session_invalid" | "session_validation_failed" | string;
 }
 
-export type InvitationStatus =
-  | "pending"
-  | "accepted"
-  | "rejected"
-  | "cancelled";
+export type InvitationStatus = "pending" | "accepted" | "rejected" | "cancelled";
 
 export interface ConversationInvitation {
   id: string;
@@ -212,20 +204,16 @@ export interface WsConversationCreated {
 // ─── Call Types ──────────────────────────────────────────────────────────────
 
 export type CallState = "idle" | "outgoing" | "incoming" | "active" | "ended";
+export type CallType = "audio" | "video";
 
-export type CallOutcome =
-  | "completed"
-  | "missed"
-  | "rejected"
-  | "cancelled"
-  | "failed"
-  | "busy";
+export type CallOutcome = "completed" | "missed" | "rejected" | "cancelled" | "failed" | "busy";
 
 export interface WsCallIncoming {
   callId: string;
   conversationId: string;
   callerId: string;
   offer: string;
+  type?: CallType;
 }
 
 export interface WsCallAnswered {

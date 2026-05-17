@@ -18,7 +18,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { Calls } from "./api";
-import { CallManager } from "./call-manager";
+import { CallManager, type CallType } from "./call-manager";
 import {
   getSocket,
   emitCallInitiate,
@@ -46,16 +46,28 @@ interface CallContextValue {
   peerId: string | null;
   /** Resolved display name of the peer (from backend on incoming, from members on outgoing). */
   peerName: string | null;
+  callType: CallType;
   isMuted: boolean;
+  isCameraOff: boolean;
+  videoFallbackToAudio: boolean;
+  localStream: MediaStream | null;
+  remoteStream: MediaStream | null;
   answeredAt: Date | null;
   /** True when the active call overlay is visible (user can hide it to browse). */
   overlayVisible: boolean;
-  initiateCall: (calleeId: string, conversationId: string, calleeName?: string) => Promise<void>;
+  initiateCall: (
+    calleeId: string,
+    conversationId: string,
+    calleeName?: string,
+    type?: CallType,
+  ) => Promise<void>;
   acceptCall: () => Promise<void>;
   rejectCall: () => void;
   cancelCall: () => void;
   endCall: () => void;
   toggleMute: () => void;
+  toggleCamera: () => void;
+  switchCamera: () => void;
   showOverlay: () => void;
   hideOverlay: () => void;
 }
@@ -113,13 +125,27 @@ async function getIceServers(): Promise<RTCIceServer[]> {
   }
 }
 
+function inferCallTypeFromOffer(offerSdp: string): CallType {
+  try {
+    const offer = JSON.parse(offerSdp) as RTCSessionDescriptionInit;
+    return offer.sdp?.includes("m=video") ? "video" : "audio";
+  } catch {
+    return "audio";
+  }
+}
+
 export function CallProvider({ children }: { children: ReactNode }) {
   const [callState, setCallState] = useState<CallState>("idle");
   const [callId, setCallId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [peerId, setPeerId] = useState<string | null>(null);
   const [peerName, setPeerName] = useState<string | null>(null);
+  const [callType, setCallType] = useState<CallType>("audio");
   const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const [videoFallbackToAudio, setVideoFallbackToAudio] = useState(false);
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [answeredAt, setAnsweredAt] = useState<Date | null>(null);
   const [overlayVisible, setOverlayVisible] = useState(false);
 
@@ -146,6 +172,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         // CallManager state is separate from call flow state
       },
       onRemoteStream: (stream) => {
+        setRemoteStream(stream);
         if (remoteAudioRef.current) {
           remoteAudioRef.current.srcObject = stream;
         }
@@ -160,7 +187,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setConversationId(null);
     setPeerId(null);
     setPeerName(null);
+    setCallType("audio");
     setIsMuted(false);
+    setIsCameraOff(false);
+    setVideoFallbackToAudio(false);
+    setLocalStream(null);
+    setRemoteStream(null);
     setAnsweredAt(null);
     setOverlayVisible(false);
     incomingOfferRef.current = null;
@@ -181,6 +213,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setConversationId(evt.conversationId);
       setPeerId(evt.callerId);
       setPeerName((evt as WsCallIncoming & { callerName?: string }).callerName ?? null);
+      setCallType(evt.type ?? inferCallTypeFromOffer(evt.offer));
+      setIsCameraOff(false);
+      setVideoFallbackToAudio(false);
       setCallState("incoming");
       setOverlayVisible(true);
       incomingOfferRef.current = evt.offer;
@@ -249,13 +284,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
     };
     // We intentionally re-subscribe when callState/callId change so our closures
     // see current values.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [callState, callId, reset]);
 
   // ─── Actions ──────────────────────────────────────────────────────────
 
   const initiateCall = useCallback(
-    async (calleeId: string, convId: string, calleeName?: string) => {
+    async (calleeId: string, convId: string, calleeName?: string, type: CallType = "audio") => {
       if (callState !== "idle") {
         toast.error("You're already in a call");
         return;
@@ -267,15 +301,20 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
         // We need a temporary callId for the manager — server will confirm it
         const tempCallId = crypto.randomUUID();
-        const offerSdp = await mgr.createOffer(tempCallId, iceServers);
+        const offerSdp = await mgr.createOffer(tempCallId, iceServers, type);
+        const fallback = mgr.videoFallbackToAudio;
 
         setCallState("outgoing");
         setConversationId(convId);
         setPeerId(calleeId);
         setPeerName(calleeName ?? null);
+        setCallType(type);
+        setIsCameraOff(false);
+        setVideoFallbackToAudio(fallback);
+        setLocalStream(mgr.getLocalStream());
         setOverlayVisible(true);
 
-        const result = await emitCallInitiate(convId, calleeId, offerSdp);
+        const result = await emitCallInitiate(convId, calleeId, offerSdp, type);
         if (result.error || !result.callId) {
           // Server rejected — cleanup
           mgr.cleanup();
@@ -306,9 +345,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
         callId,
         incomingOfferRef.current!,
         iceServers,
+        callType,
       );
       emitCallAnswer(callId, answerSdp);
 
+      setLocalStream(mgr.getLocalStream());
+      setVideoFallbackToAudio(mgr.videoFallbackToAudio);
+      setIsCameraOff(false);
       setCallState("active");
       setAnsweredAt(new Date());
     } catch (err) {
@@ -316,7 +359,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       toast.error("Could not accept call");
       reset();
     }
-  }, [callState, callId, reset]);
+  }, [callState, callId, callType, reset]);
 
   const rejectCall = useCallback(() => {
     if (callId) emitCallReject(callId);
@@ -339,6 +382,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setIsMuted(muted);
   }, []);
 
+  const toggleCamera = useCallback(() => {
+    const nowOff = callManagerRef.current.toggleCamera();
+    setIsCameraOff(nowOff);
+  }, []);
+
+  const switchCamera = useCallback(() => {
+    void callManagerRef.current
+      .switchCamera()
+      .then(() => setLocalStream(callManagerRef.current.getLocalStream()))
+      .catch((err) => console.warn("[CallContext] Failed to switch camera:", err));
+  }, []);
+
   const showOverlay = useCallback(() => setOverlayVisible(true), []);
   const hideOverlay = useCallback(() => setOverlayVisible(false), []);
 
@@ -350,7 +405,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
         conversationId,
         peerId,
         peerName,
+        callType,
         isMuted,
+        isCameraOff,
+        videoFallbackToAudio,
+        localStream,
+        remoteStream,
         answeredAt,
         overlayVisible,
         initiateCall,
@@ -359,6 +419,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
         cancelCall,
         endCall,
         toggleMute,
+        toggleCamera,
+        switchCamera,
         showOverlay,
         hideOverlay,
       }}
