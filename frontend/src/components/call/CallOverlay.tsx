@@ -202,16 +202,20 @@ export function CallOverlay() {
   }, [videoFallbackToAudio]);
 
   useEffect(() => {
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = remoteStream;
-    }
+    const vid = remoteVideoRef.current;
+    if (!vid || !remoteStream) return;
+    if (vid.srcObject === remoteStream) return;
+    vid.srcObject = remoteStream;
+    vid.play().catch(() => {});
   }, [remoteStream]);
 
   useEffect(() => {
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [localStream, isCameraOff]);
+    const vid = localVideoRef.current;
+    if (!vid || !localStream) return;
+    if (vid.srcObject === localStream) return;
+    vid.srcObject = localStream;
+    vid.play().catch(() => {});
+  }, [localStream]);
 
   useEffect(() => {
     if (!dragOffset) return;
