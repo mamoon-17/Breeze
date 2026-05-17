@@ -60,12 +60,9 @@ export function ChatThread({
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center">
         <div className="max-w-sm text-sm text-muted-foreground">
-          <p className="font-display text-2xl text-foreground">
-            Send the first message.
-          </p>
+          <p className="font-display text-2xl text-foreground">Send the first message.</p>
           <p className="mt-2">
-            Start with a hello — Breeze handles delivery and read receipts in
-            real time.
+            Start with a hello — Breeze handles delivery and read receipts in real time.
           </p>
         </div>
       </div>
@@ -76,10 +73,7 @@ export function ChatThread({
   for (const m of members) memberMap.set(m.userId, m);
 
   return (
-    <div
-      ref={scrollRef}
-      className="scroll-soft flex-1 overflow-y-auto p-6 md:p-8"
-    >
+    <div ref={scrollRef} className="scroll-soft flex-1 overflow-y-auto p-6 md:p-8">
       <div className="space-y-6">
         {messages.map((m, idx) => {
           // System messages (e.g. call events) render as centered dividers
@@ -88,11 +82,9 @@ export function ChatThread({
           }
 
           const mine = m.senderId === currentUserId;
-          const showHeader =
-            idx === 0 || messages[idx - 1].senderId !== m.senderId;
+          const showHeader = idx === 0 || messages[idx - 1].senderId !== m.senderId;
           const sender = memberMap.get(m.senderId);
-          const name =
-            sender?.user?.displayName ?? sender?.user?.email ?? "Someone";
+          const name = sender?.user?.displayName ?? sender?.user?.email ?? "Someone";
           const ts = (() => {
             try {
               return format(new Date(m.sentAt ?? m.createdAt), "h:mm a");
@@ -171,9 +163,7 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
             strokeLinejoin="round"
           >
             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-            {outcome === "missed" && (
-              <line x1="1" y1="1" x2="23" y2="23" />
-            )}
+            {outcome === "missed" && <line x1="1" y1="1" x2="23" y2="23" />}
           </svg>
         )}
         <span className="font-medium">{displayMessage}</span>
@@ -258,7 +248,6 @@ function formatCallDuration(seconds: number | null): string {
   const secs = Math.floor(seconds % 60);
   return `${mins}m ${secs}s`;
 }
-
 
 function TypingBubble({ name }: { name: string }) {
   return (
