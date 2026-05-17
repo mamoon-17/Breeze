@@ -66,7 +66,7 @@ export class CallService {
     }
 
     // Busy guard — caller
-    if (this.sessionMap.isUserBusy(callerId)) {
+    if (await this.sessionMap.isUserBusy(callerId)) {
       this.socketState.emitToUser(callerId, CallServerEvents.ERROR, {
         code: 'ALREADY_IN_CALL',
         message: 'You are already in a call.',
@@ -75,7 +75,7 @@ export class CallService {
     }
 
     // Busy guard — callee
-    if (this.sessionMap.isUserBusy(calleeId)) {
+    if (await this.sessionMap.isUserBusy(calleeId)) {
       this.socketState.emitToUser(callerId, CallServerEvents.BUSY, {
         calleeId,
       });
@@ -101,7 +101,7 @@ export class CallService {
       this.endSession(callId, 'missed');
     }, RING_TIMEOUT_MS);
 
-    this.sessionMap.create(session);
+    await this.sessionMap.create(session);
 
     // Resolve caller display name for the callee's UI
     let callerName: string | undefined;
@@ -136,8 +136,8 @@ export class CallService {
 
   // ─── Accept ────────────────────────────────────────────────────────────────
 
-  accept(callId: string, calleeId: string): boolean {
-    const session = this.sessionMap.get(callId);
+  async accept(callId: string, calleeId: string): Promise<boolean> {
+    const session = await this.sessionMap.get(callId);
     if (
       !session ||
       session.calleeId !== calleeId ||
@@ -158,6 +158,7 @@ export class CallService {
 
     session.state = 'active';
     session.answeredAt = new Date();
+    await this.sessionMap.set(callId, session);
 
     this.logger.log(`Call accepted: ${callId} by ${calleeId}`);
     return true;
@@ -165,8 +166,12 @@ export class CallService {
 
   // ─── Answer (SDP) ──────────────────────────────────────────────────────────
 
-  answer(callId: string, calleeId: string, answerSdp: string): boolean {
-    const session = this.sessionMap.get(callId);
+  async answer(
+    callId: string,
+    calleeId: string,
+    answerSdp: string,
+  ): Promise<boolean> {
+    const session = await this.sessionMap.get(callId);
     if (!session || session.calleeId !== calleeId) {
       return false;
     }
@@ -183,8 +188,12 @@ export class CallService {
 
   // ─── ICE Candidate relay ───────────────────────────────────────────────────
 
-  relayIceCandidate(callId: string, senderId: string, candidate: string): void {
-    const session = this.sessionMap.get(callId);
+  async relayIceCandidate(
+    callId: string,
+    senderId: string,
+    candidate: string,
+  ): Promise<void> {
+    const session = await this.sessionMap.get(callId);
     if (!session) return;
 
     const recipientId =
@@ -198,8 +207,8 @@ export class CallService {
 
   // ─── Reject ────────────────────────────────────────────────────────────────
 
-  reject(callId: string, calleeId: string): void {
-    const session = this.sessionMap.get(callId);
+  async reject(callId: string, calleeId: string): Promise<void> {
+    const session = await this.sessionMap.get(callId);
     if (
       !session ||
       session.calleeId !== calleeId ||
@@ -207,13 +216,13 @@ export class CallService {
     ) {
       return;
     }
-    this.endSession(callId, 'rejected');
+    await this.endSession(callId, 'rejected');
   }
 
   // ─── Cancel ────────────────────────────────────────────────────────────────
 
-  cancel(callId: string, callerId: string): void {
-    const session = this.sessionMap.get(callId);
+  async cancel(callId: string, callerId: string): Promise<void> {
+    const session = await this.sessionMap.get(callId);
     if (
       !session ||
       session.callerId !== callerId ||
@@ -221,52 +230,52 @@ export class CallService {
     ) {
       return;
     }
-    this.endSession(callId, 'cancelled');
+    await this.endSession(callId, 'cancelled');
   }
 
   // ─── End (hangup) ──────────────────────────────────────────────────────────
 
-  end(callId: string, _userId: string): void {
-    const session = this.sessionMap.get(callId);
+  async end(callId: string, _userId: string): Promise<void> {
+    const session = await this.sessionMap.get(callId);
     if (!session || session.state === 'ended') return;
 
     const outcome: CallOutcome =
       session.state === 'ringing' ? 'missed' : 'completed';
-    this.endSession(callId, outcome);
+    await this.endSession(callId, outcome);
   }
 
   // ─── ICE failed ────────────────────────────────────────────────────────────
 
-  iceFailed(callId: string, _userId: string): void {
-    const session = this.sessionMap.get(callId);
+  async iceFailed(callId: string, _userId: string): Promise<void> {
+    const session = await this.sessionMap.get(callId);
     if (!session || session.state === 'ended') return;
-    this.endSession(callId, 'failed');
+    await this.endSession(callId, 'failed');
   }
 
   // ─── Disconnect handler ────────────────────────────────────────────────────
 
-  onUserDisconnect(userId: string): void {
-    const session = this.sessionMap.getSessionForUser(userId);
+  async onUserDisconnect(userId: string): Promise<void> {
+    const session = await this.sessionMap.getSessionForUser(userId);
     if (!session) return;
 
     if (session.state === 'ringing') {
       if (userId === session.callerId) {
         // Caller left while ringing → cancelled
-        this.endSession(session.callId, 'cancelled');
+        await this.endSession(session.callId, 'cancelled');
       } else {
         // Callee left while ringing → missed
-        this.endSession(session.callId, 'missed');
+        await this.endSession(session.callId, 'missed');
       }
     } else if (session.state === 'active') {
       // Active call — treat as hangup
-      this.endSession(session.callId, 'completed');
+      await this.endSession(session.callId, 'completed');
     }
   }
 
   // ─── Central cleanup ──────────────────────────────────────────────────────
 
   async endSession(callId: string, outcome: CallOutcome): Promise<void> {
-    const session = this.sessionMap.get(callId);
+    const session = await this.sessionMap.get(callId);
     if (!session || session.state === 'ended') return;
 
     // Mark ended immediately to prevent re-entry
@@ -284,7 +293,7 @@ export class CallService {
     let durationSeconds: number | null = null;
     if (session.answeredAt) {
       durationSeconds = Math.round(
-        (now.getTime() - session.answeredAt.getTime()) / 1000,
+        (now.getTime() - new Date(session.answeredAt).getTime()) / 1000,
       );
     }
 
@@ -334,7 +343,7 @@ export class CallService {
     }
 
     // Remove from maps
-    this.sessionMap.delete(callId);
+    await this.sessionMap.delete(callId);
 
     // Insert system message in the conversation thread
     try {

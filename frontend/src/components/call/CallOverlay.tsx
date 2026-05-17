@@ -150,6 +150,7 @@ export function CallOverlay() {
     remoteStream,
     answeredAt,
     overlayVisible,
+    isReconnecting,
     acceptCall,
     rejectCall,
     cancelCall,
@@ -362,6 +363,7 @@ export function CallOverlay() {
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.3); opacity: 0; } }
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes reconnectPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .call-btn { 
           width: 64px; height: 64px; border-radius: 50%; border: none; cursor: pointer;
           display: flex; align-items: center; justify-content: center;
@@ -434,6 +436,33 @@ export function CallOverlay() {
           >
             ×
           </button>
+        </div>
+      )}
+
+      {/* Reconnecting banner (Phase 12) */}
+      {callState === "active" && isReconnecting && (
+        <div
+          style={{
+            position: "fixed",
+            top: videoFallbackToAudio && !fallbackDismissed ? 64 : 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 4,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            border: "1px solid rgba(255,255,255,0.18)",
+            borderRadius: 999,
+            background: "rgba(15,23,42,0.82)",
+            color: "white",
+            padding: "9px 16px",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.28)",
+            fontFamily: "'Inter', -apple-system, sans-serif",
+            fontSize: 13,
+            animation: "reconnectPulse 2s ease-in-out infinite",
+          }}
+        >
+          <span>Reconnecting…</span>
         </div>
       )}
 

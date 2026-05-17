@@ -55,6 +55,8 @@ interface CallContextValue {
   answeredAt: Date | null;
   /** True when the active call overlay is visible (user can hide it to browse). */
   overlayVisible: boolean;
+  /** True when the socket is reconnecting during an active call. */
+  isReconnecting: boolean;
   initiateCall: (
     calleeId: string,
     conversationId: string,
@@ -148,6 +150,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [answeredAt, setAnsweredAt] = useState<Date | null>(null);
   const [overlayVisible, setOverlayVisible] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   // Refs for the incoming offer SDP (needed when callee accepts)
   const incomingOfferRef = useRef<string | null>(null);
@@ -195,6 +198,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setRemoteStream(null);
     setAnsweredAt(null);
     setOverlayVisible(false);
+    setIsReconnecting(false);
     incomingOfferRef.current = null;
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
@@ -241,6 +245,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       if (evt.callId !== callId && callId !== null) return;
       // Show brief "ended" state before resetting
       setCallState("ended");
+      setIsReconnecting(false);
       setTimeout(() => reset(), 1500);
     };
 
@@ -260,6 +265,22 @@ export function CallProvider({ children }: { children: ReactNode }) {
       reset();
     };
 
+    // ─── Reconnect logic (Phase 12) ──────────────────────────────────
+    const onConnect = () => {
+      const mgr = callManagerRef.current;
+      const activeId = mgr.activeCallId;
+      if (activeId) {
+        socket.emit("call:reconnect", { callId: activeId });
+        setIsReconnecting(true);
+      }
+    };
+
+    const onPeerReconnected = () => {
+      setIsReconnecting(false);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("call:peer-reconnected", onPeerReconnected);
     socket.on("call:incoming", onIncoming);
     socket.on("call:answered", onAnswered);
     socket.on("call:ice-candidate", onIceCandidate);
@@ -274,6 +295,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socket.on("call:error", onError);
 
     return () => {
+      socket.off("connect", onConnect);
+      socket.off("call:peer-reconnected", onPeerReconnected);
       socket.off("call:incoming", onIncoming);
       socket.off("call:answered", onAnswered);
       socket.off("call:ice-candidate", onIceCandidate);
@@ -413,6 +436,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         remoteStream,
         answeredAt,
         overlayVisible,
+        isReconnecting,
         initiateCall,
         acceptCall,
         rejectCall,

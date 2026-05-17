@@ -13,6 +13,7 @@ import { AppConfigService } from '../../config/app-config.service';
 import { SocketStateService } from '../socket/socket-state.service';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 import { CallService } from './call.service';
+import { CallSessionMap } from './call-session.map';
 import { CallClientEvents } from './call.events';
 import { CallInitiateDto } from './dto/call-initiate.dto';
 import { CallIdDto } from './dto/call-id.dto';
@@ -38,6 +39,7 @@ export class CallGateway implements OnGatewayInit, OnGatewayDisconnect {
 
   constructor(
     private readonly callService: CallService,
+    private readonly callSessionMap: CallSessionMap,
     private readonly socketState: SocketStateService,
     private readonly appConfig: AppConfigService,
     private readonly wsJwtMiddleware: WsJwtMiddleware,
@@ -100,78 +102,115 @@ export class CallGateway implements OnGatewayInit, OnGatewayDisconnect {
 
   @SubscribeMessage(CallClientEvents.ACCEPT)
   @UsePipes(wsValidationPipe)
-  handleAccept(
+  async handleAccept(
     @MessageBody() dto: CallIdDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const calleeId = client.data.user.id;
-    const ok = this.callService.accept(dto.callId, calleeId);
+    const ok = await this.callService.accept(dto.callId, calleeId);
     return { ok };
   }
 
   @SubscribeMessage(CallClientEvents.ANSWER)
   @UsePipes(wsValidationPipe)
-  handleAnswer(
+  async handleAnswer(
     @MessageBody() dto: CallAnswerDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const calleeId = client.data.user.id;
-    const ok = this.callService.answer(dto.callId, calleeId, dto.answer);
+    const ok = await this.callService.answer(dto.callId, calleeId, dto.answer);
     return { ok };
   }
 
   @SubscribeMessage(CallClientEvents.ICE_CANDIDATE)
   @UsePipes(wsValidationPipe)
-  handleIceCandidate(
+  async handleIceCandidate(
     @MessageBody() dto: CallIceCandidateDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const userId = client.data.user.id;
-    this.callService.relayIceCandidate(dto.callId, userId, dto.candidate);
+    await this.callService.relayIceCandidate(dto.callId, userId, dto.candidate);
     return { ok: true };
   }
 
   @SubscribeMessage(CallClientEvents.REJECT)
   @UsePipes(wsValidationPipe)
-  handleReject(
+  async handleReject(
     @MessageBody() dto: CallIdDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const calleeId = client.data.user.id;
-    this.callService.reject(dto.callId, calleeId);
+    await this.callService.reject(dto.callId, calleeId);
     return { ok: true };
   }
 
   @SubscribeMessage(CallClientEvents.CANCEL)
   @UsePipes(wsValidationPipe)
-  handleCancel(
+  async handleCancel(
     @MessageBody() dto: CallIdDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const callerId = client.data.user.id;
-    this.callService.cancel(dto.callId, callerId);
+    await this.callService.cancel(dto.callId, callerId);
     return { ok: true };
   }
 
   @SubscribeMessage(CallClientEvents.END)
   @UsePipes(wsValidationPipe)
-  handleEnd(
+  async handleEnd(
     @MessageBody() dto: CallIdDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const userId = client.data.user.id;
-    this.callService.end(dto.callId, userId);
+    await this.callService.end(dto.callId, userId);
     return { ok: true };
   }
 
   @SubscribeMessage(CallClientEvents.ICE_FAILED)
   @UsePipes(wsValidationPipe)
-  handleIceFailed(
+  async handleIceFailed(
     @MessageBody() dto: CallIdDto,
     @ConnectedSocket() client: AuthenticatedSocket,
   ) {
     const userId = client.data.user.id;
-    this.callService.iceFailed(dto.callId, userId);
+    await this.callService.iceFailed(dto.callId, userId);
     return { ok: true };
+  }
+
+  // ─── Reconnect handler (Phase 12) ─────────────────────────────────────────
+
+  @SubscribeMessage(CallClientEvents.RECONNECT)
+  async handleReconnect(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: { callId: string },
+  ): Promise<void> {
+    const session = await this.callSessionMap.get(dto.callId);
+    if (!session) return; // session already ended, nothing to do
+
+    const user = client.data.user;
+    if (!user) return;
+
+    // Re-associate socket ID
+    if (session.callerId === user.id) {
+      session.callerSocketId = client.id;
+    } else if (session.calleeId === user.id) {
+      session.calleeSocketId = client.id;
+    } else {
+      return; // not a participant
+    }
+
+    await this.callSessionMap.set(dto.callId, session);
+
+    // Notify the other party that this user reconnected
+    const otherSocketId =
+      session.callerId === user.id
+        ? session.calleeSocketId
+        : session.callerSocketId;
+
+    if (otherSocketId) {
+      this.server
+        .to(otherSocketId)
+        .emit('call:peer-reconnected', { callId: dto.callId });
+    }
   }
 }

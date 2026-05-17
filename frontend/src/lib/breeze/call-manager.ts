@@ -45,6 +45,10 @@ export class CallManager {
     this.callbacks = cb;
   }
 
+  get activeCallId(): string | null {
+    return this.callId;
+  }
+
   getState(): CallManagerState {
     return this.state;
   }

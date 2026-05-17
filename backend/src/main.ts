@@ -5,6 +5,9 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 import cookieParser from 'cookie-parser';
 import { AppConfigService } from './config/app-config.service';
+import { createAdapter } from '@socket.io/redis-adapter';
+import Redis from 'ioredis';
+import { SocketStateService } from './modules/socket/socket-state.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -46,6 +49,35 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
   await app.listen(process.env.PORT ?? 3000);
+
+  // ─── Socket.IO Redis Adapter (Phase 12 — horizontal scaling) ─────────────
+  // Must run after app.listen() because ChatGateway.afterInit() sets the
+  // server reference on SocketStateService during the listen phase.
+  const pubClient = new Redis({
+    host: appConfig.redisHost,
+    port: appConfig.redisPort,
+    password: appConfig.redisPassword,
+  });
+  const subClient = pubClient.duplicate();
+  pubClient.on('error', (err) => console.error('Redis pubClient error:', err));
+  subClient.on('error', (err) => console.error('Redis subClient error:', err));
+
+  await Promise.all([
+    new Promise<void>((resolve, reject) => {
+      pubClient.on('ready', resolve);
+      pubClient.on('error', reject);
+    }),
+    new Promise<void>((resolve, reject) => {
+      subClient.on('ready', resolve);
+      subClient.on('error', reject);
+    }),
+  ]);
+
+  const socketStateService = app.get(SocketStateService);
+  const io = socketStateService.getServer();
+  io.adapter(createAdapter(pubClient, subClient));
+  Logger.log('Socket.IO Redis adapter configured', 'Bootstrap');
 }
 void bootstrap();
