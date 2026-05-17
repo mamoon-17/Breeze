@@ -93,6 +93,7 @@ export class CallGateway implements OnGatewayInit, OnGatewayDisconnect {
       dto.calleeId,
       dto.conversationId,
       dto.offer,
+      dto.type,
     );
     return result;
   }

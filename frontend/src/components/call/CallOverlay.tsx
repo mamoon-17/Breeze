@@ -601,7 +601,8 @@ export function CallOverlay() {
             textShadow: isVideoActive ? "0 2px 10px rgba(0,0,0,0.55)" : undefined,
           }}
         >
-          {callState === "incoming" && "Incoming voice call…"}
+          {callState === "incoming" &&
+            (callType === "video" ? "Incoming video call" : "Incoming voice call")}
           {callState === "outgoing" && "Calling…"}
           {callState === "active" && formatDuration(duration)}
           {callState === "ended" && "Call ended"}

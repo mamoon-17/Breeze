@@ -119,14 +119,34 @@ export function ChatThread({
 }
 
 function SystemMessageBubble({ message }: { message: ChatMessage }) {
-  const metadata = message.metadata as {
-    outcome?: string;
-    durationSeconds?: number | null;
-  } | null;
+  const metadata = normalizeCallMetadata(message.metadata);
 
-  const isCall = message.subtype === "call";
+  const isCall =
+    message.subtype === "call" ||
+    Boolean(metadata?.outcome || metadata?.durationSeconds || metadata?.callType || metadata?.type);
   const outcome = metadata?.outcome ?? "";
   const isCompleted = outcome === "completed";
+  const callType = normalizeCallType(metadata, message.message);
+  const callLabel = callType === "video" ? "Video call" : "Voice call";
+  const callLabelLower = callType === "video" ? "video call" : "voice call";
+  const durationText = formatCallDuration(metadata?.durationSeconds ?? null);
+  const displayMessage = (() => {
+    if (!isCall) return message.message;
+    switch (outcome) {
+      case "completed":
+        return durationText ? `${callLabel} · ${durationText}` : callLabel;
+      case "missed":
+        return `Missed ${callLabelLower}`;
+      case "rejected":
+        return "Declined";
+      case "cancelled":
+        return `Cancelled ${callLabelLower}`;
+      case "failed":
+        return "Call failed";
+      default:
+        return message.message;
+    }
+  })();
 
   return (
     <div className="flex items-center justify-center gap-2 py-2">
@@ -156,7 +176,7 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
             )}
           </svg>
         )}
-        <span className="font-medium">{message.message}</span>
+        <span className="font-medium">{displayMessage}</span>
         {isCall && isCompleted && (
           <span className="text-[10px] opacity-60">
             {(() => {
@@ -171,6 +191,72 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
       </div>
     </div>
   );
+}
+
+type CallMetadata = {
+  outcome?: string;
+  durationSeconds?: number | null;
+  callType?: string;
+  type?: string;
+};
+
+function normalizeCallMetadata(raw: ChatMessage["metadata"]): CallMetadata | null {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as CallMetadata;
+      return typeof parsed === "object" && parsed !== null ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === "object") return raw as CallMetadata;
+  return null;
+}
+
+function normalizeCallType(metadata: CallMetadata | null, fallbackText: string): "audio" | "video" {
+  const fromMetadata = findCallTypeInMetadata(metadata);
+  if (fromMetadata) return fromMetadata;
+  if (fallbackText.toLowerCase().includes("video call")) return "video";
+  return "audio";
+}
+
+function findCallTypeInMetadata(value: unknown): "audio" | "video" | null {
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    if (normalized === "video") return "video";
+    if (normalized === "audio" || normalized === "voice") return "audio";
+    return null;
+  }
+
+  if (!value || typeof value !== "object") return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCallTypeInMetadata(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    const keyLower = key.toLowerCase();
+    if (val === true) {
+      if (keyLower.includes("video")) return "video";
+      if (keyLower.includes("audio") || keyLower.includes("voice")) return "audio";
+    }
+    const found = findCallTypeInMetadata(val);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function formatCallDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}m ${secs}s`;
 }
 
 

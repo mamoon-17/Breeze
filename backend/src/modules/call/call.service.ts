@@ -39,6 +39,7 @@ export class CallService {
     calleeId: string,
     conversationId: string,
     offer: string,
+    type?: 'audio' | 'video',
   ): Promise<{ callId: string } | { error: string }> {
     // Self-call guard
     if (callerId === calleeId) {
@@ -89,6 +90,7 @@ export class CallService {
       conversationId,
       callerId,
       calleeId,
+      callType: this.resolveCallType(type, offer),
       state: 'ringing',
       createdAt: now,
       ringTimeout: null,
@@ -338,6 +340,7 @@ export class CallService {
           callId,
           outcome,
           durationSeconds,
+          callType: session.callType ?? 'audio',
           callerId: session.callerId,
           calleeId: session.calleeId,
         },
@@ -406,6 +409,20 @@ export class CallService {
     const s = seconds % 60;
     if (m === 0) return `${s}s`;
     return `${m}m ${s.toString().padStart(2, '0')}s`;
+  }
+
+  private resolveCallType(
+    type?: 'audio' | 'video',
+    offer?: string,
+  ): 'audio' | 'video' {
+    if (type === 'video' || type === 'audio') return type;
+    if (!offer) return 'audio';
+    try {
+      const parsed = JSON.parse(offer) as { sdp?: string };
+      return parsed.sdp?.includes('m=video') ? 'video' : 'audio';
+    } catch {
+      return 'audio';
+    }
   }
 
   // ─── Call history ──────────────────────────────────────────────────────────
