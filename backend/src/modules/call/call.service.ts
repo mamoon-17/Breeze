@@ -39,6 +39,7 @@ export class CallService {
     calleeId: string,
     conversationId: string,
     offer: string,
+    type?: 'audio' | 'video',
   ): Promise<{ callId: string } | { error: string }> {
     // Self-call guard
     if (callerId === calleeId) {
@@ -89,6 +90,7 @@ export class CallService {
       conversationId,
       callerId,
       calleeId,
+      callType: this.resolveCallType(type, offer),
       state: 'ringing',
       createdAt: now,
       ringTimeout: null,
@@ -136,7 +138,11 @@ export class CallService {
 
   accept(callId: string, calleeId: string): boolean {
     const session = this.sessionMap.get(callId);
-    if (!session || session.calleeId !== calleeId || session.state !== 'ringing') {
+    if (
+      !session ||
+      session.calleeId !== calleeId ||
+      session.state !== 'ringing'
+    ) {
       this.socketState.emitToUser(calleeId, CallServerEvents.ERROR, {
         code: CallErrorCodes.INVALID_SESSION,
         message: 'No ringing call to accept.',
@@ -177,11 +183,7 @@ export class CallService {
 
   // ─── ICE Candidate relay ───────────────────────────────────────────────────
 
-  relayIceCandidate(
-    callId: string,
-    senderId: string,
-    candidate: string,
-  ): void {
+  relayIceCandidate(callId: string, senderId: string, candidate: string): void {
     const session = this.sessionMap.get(callId);
     if (!session) return;
 
@@ -198,7 +200,11 @@ export class CallService {
 
   reject(callId: string, calleeId: string): void {
     const session = this.sessionMap.get(callId);
-    if (!session || session.calleeId !== calleeId || session.state !== 'ringing') {
+    if (
+      !session ||
+      session.calleeId !== calleeId ||
+      session.state !== 'ringing'
+    ) {
       return;
     }
     this.endSession(callId, 'rejected');
@@ -208,7 +214,11 @@ export class CallService {
 
   cancel(callId: string, callerId: string): void {
     const session = this.sessionMap.get(callId);
-    if (!session || session.callerId !== callerId || session.state !== 'ringing') {
+    if (
+      !session ||
+      session.callerId !== callerId ||
+      session.state !== 'ringing'
+    ) {
       return;
     }
     this.endSession(callId, 'cancelled');
@@ -338,6 +348,7 @@ export class CallService {
           callId,
           outcome,
           durationSeconds,
+          callType: session.callType ?? 'audio',
           callerId: session.callerId,
           calleeId: session.calleeId,
         },
@@ -352,14 +363,11 @@ export class CallService {
     // Send missed-call push notification to callee
     if (outcome === 'missed') {
       try {
-        await this.notificationsService.sendMissedCallPush(
-          session.calleeId,
-          {
-            type: 'missed_call',
-            room: session.conversationId,
-            callId,
-          },
-        );
+        await this.notificationsService.sendMissedCallPush(session.calleeId, {
+          type: 'missed_call',
+          room: session.conversationId,
+          callId,
+        });
       } catch (err) {
         this.logger.error(
           `Failed to send missed-call push for call ${callId}`,
@@ -406,6 +414,20 @@ export class CallService {
     const s = seconds % 60;
     if (m === 0) return `${s}s`;
     return `${m}m ${s.toString().padStart(2, '0')}s`;
+  }
+
+  private resolveCallType(
+    type?: 'audio' | 'video',
+    offer?: string,
+  ): 'audio' | 'video' {
+    if (type === 'video' || type === 'audio') return type;
+    if (!offer) return 'audio';
+    try {
+      const parsed = JSON.parse(offer) as { sdp?: string };
+      return parsed.sdp?.includes('m=video') ? 'video' : 'audio';
+    } catch {
+      return 'audio';
+    }
   }
 
   // ─── Call history ──────────────────────────────────────────────────────────

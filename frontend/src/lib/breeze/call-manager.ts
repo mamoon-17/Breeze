@@ -1,21 +1,19 @@
 /**
- * CallManager — singleton WebRTC peer connection lifecycle for audio-only 1:1 calls.
+ * CallManager — singleton WebRTC peer connection lifecycle for 1:1 calls.
  *
  * Responsibilities:
- * - getUserMedia (audio only)
+ * - getUserMedia for audio/video calls
  * - Create / handle RTCPeerConnection, SDP offers & answers
  * - Trickle ICE relay via socket helpers
- * - Mute/unmute (no renegotiation — just toggle track.enabled)
+ * - Mute/unmute and camera enable/disable
  * - ICE failure detection with grace period + restartIce
  * - Cleanup on call end
  */
 
-import {
-  emitCallIceCandidate,
-  emitCallIceFailed,
-} from "./socket";
+import { emitCallIceCandidate, emitCallIceFailed } from "./socket";
 
 export type CallManagerState = "idle" | "connecting" | "connected" | "failed";
+export type CallType = "audio" | "video";
 
 export interface CallManagerCallbacks {
   onStateChange: (state: CallManagerState) => void;
@@ -28,12 +26,15 @@ export class CallManager {
   private pc: RTCPeerConnection | null = null;
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
+  private cameraTrack: MediaStreamTrack | null = null;
+  private facingMode: "user" | "environment" = "user";
   private callId: string | null = null;
   private state: CallManagerState = "idle";
   private callbacks: CallManagerCallbacks | null = null;
   private iceRestartAttempted = false;
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCandidates: RTCIceCandidate[] = [];
+  videoFallbackToAudio = false;
 
   static getInstance(): CallManager {
     if (!instance) instance = new CallManager();
@@ -61,12 +62,13 @@ export class CallManager {
   async createOffer(
     callId: string,
     iceServers: RTCIceServer[],
+    type: CallType = "audio",
   ): Promise<string> {
     this.callId = callId;
     this.setState("connecting");
 
-    await this.acquireMedia();
-    this.createPeerConnection(iceServers);
+    await this.initializeMedia(type);
+    this.createPeerConnection(iceServers, type);
 
     const offer = await this.pc!.createOffer();
     // Munge SDP for better audio quality before setting
@@ -84,12 +86,13 @@ export class CallManager {
     callId: string,
     offerSdp: string,
     iceServers: RTCIceServer[],
+    type: CallType = "audio",
   ): Promise<string> {
     this.callId = callId;
     this.setState("connecting");
 
-    await this.acquireMedia();
-    this.createPeerConnection(iceServers);
+    await this.initializeMedia(type);
+    this.createPeerConnection(iceServers, type);
 
     const offer = JSON.parse(offerSdp) as RTCSessionDescriptionInit;
     await this.pc!.setRemoteDescription(new RTCSessionDescription(offer));
@@ -136,7 +139,7 @@ export class CallManager {
     }
   }
 
-  // ─── Mute ───────────────────────────────────────────────────────────────
+  // ─── Media controls ─────────────────────────────────────────────────────
 
   isMuted(): boolean {
     const track = this.localStream?.getAudioTracks()[0];
@@ -148,6 +151,77 @@ export class CallManager {
     if (!track) return true;
     track.enabled = !track.enabled;
     return !track.enabled; // returns true if muted
+  }
+
+  toggleCamera(): boolean {
+    const track = this.cameraTrack;
+    if (!track) return false;
+    track.enabled = !track.enabled;
+    return !track.enabled; // returns true if camera is now off
+  }
+
+  async switchCamera(): Promise<void> {
+    this.facingMode = this.facingMode === "user" ? "environment" : "user";
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: this.facingMode, width: 1280, height: 720, frameRate: 30 },
+    });
+    const newTrack = newStream.getVideoTracks()[0];
+    if (!newTrack) return;
+    newTrack.enabled = this.cameraTrack?.enabled ?? true;
+
+    const sender = this.pc?.getSenders().find((s) => s.track?.kind === "video");
+    if (sender) await sender.replaceTrack(newTrack);
+
+    if (this.localStream) {
+      const oldTrack = this.cameraTrack;
+      if (oldTrack) this.localStream.removeTrack(oldTrack);
+      this.localStream.addTrack(newTrack);
+    }
+
+    this.cameraTrack?.stop();
+    this.cameraTrack = newTrack;
+  }
+
+  async initializeMedia(type: CallType): Promise<MediaStream> {
+    if (this.localStream) return this.localStream;
+
+    const audioConstraints: MediaTrackConstraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: 48000,
+      channelCount: 1,
+    };
+    const audioOnlyConstraints: MediaStreamConstraints = {
+      audio: audioConstraints,
+      video: false,
+    };
+
+    this.videoFallbackToAudio = false;
+
+    if (type === "audio") {
+      this.localStream = await navigator.mediaDevices.getUserMedia(audioOnlyConstraints);
+    } else {
+      try {
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          audio: audioConstraints,
+          video: {
+            width: 1280,
+            height: 720,
+            frameRate: 30,
+            facingMode: this.facingMode,
+          },
+        });
+      } catch {
+        this.videoFallbackToAudio = true;
+        this.localStream = await navigator.mediaDevices.getUserMedia(audioOnlyConstraints);
+      }
+    }
+
+    const videoTrack = this.localStream.getVideoTracks()[0];
+    if (videoTrack) this.cameraTrack = videoTrack;
+
+    return this.localStream;
   }
 
   // ─── Cleanup ────────────────────────────────────────────────────────────
@@ -172,6 +246,8 @@ export class CallManager {
     }
 
     this.remoteStream = null;
+    this.cameraTrack = null;
+    this.videoFallbackToAudio = false;
     this.callId = null;
     this.pendingCandidates = [];
     this.iceRestartAttempted = false;
@@ -185,24 +261,7 @@ export class CallManager {
     this.callbacks?.onStateChange(s);
   }
 
-  private async acquireMedia(): Promise<void> {
-    if (this.localStream) return;
-    this.localStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        // Echo/noise processing — critical for call quality
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        // Request high-quality audio capture
-        channelCount: 1,         // Mono is best for voice
-        sampleRate: 48000,       // Opus native rate
-        sampleSize: 16,          // 16-bit samples
-      },
-      video: false,
-    });
-  }
-
-  private createPeerConnection(iceServers: RTCIceServer[]): void {
+  private createPeerConnection(iceServers: RTCIceServer[], type: CallType): void {
     this.pc = new RTCPeerConnection({ iceServers });
 
     // Add local tracks
@@ -219,7 +278,7 @@ export class CallManager {
       }
     };
 
-    // Remote track → audio playback
+    // Remote track → media playback
     this.pc.ontrack = (evt) => {
       this.remoteStream = evt.streams[0] ?? new MediaStream([evt.track]);
       this.callbacks?.onRemoteStream(this.remoteStream);
@@ -235,6 +294,9 @@ export class CallManager {
         case "completed":
           this.setState("connected");
           this.iceRestartAttempted = false;
+          if (type === "video") {
+            void this.applyVideoBandwidthHint();
+          }
           if (this.disconnectTimer) {
             clearTimeout(this.disconnectTimer);
             this.disconnectTimer = null;
@@ -262,6 +324,21 @@ export class CallManager {
           break;
       }
     };
+  }
+
+  private async applyVideoBandwidthHint(): Promise<void> {
+    const sender = this.pc?.getSenders().find((s) => s.track?.kind === "video");
+    if (!sender) return;
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) {
+      params.encodings = [{}];
+    }
+    params.encodings[0].maxBitrate = 500_000;
+    try {
+      await sender.setParameters(params);
+    } catch (err) {
+      console.warn("[CallManager] Failed to set video bandwidth hint:", err);
+    }
   }
 
   private handleIceFailed(): void {
@@ -294,7 +371,7 @@ export class CallManager {
    * - ptime=60: 60ms audio frames for less packet overhead & fewer cut-offs
    */
   private static mungeOpusSdp(sdp: string): string {
-    const lines = sdp.split('\r\n');
+    const lines = sdp.split("\r\n");
     const result: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
@@ -302,40 +379,40 @@ export class CallManager {
       result.push(line);
 
       // Find Opus fmtp lines and enhance them
-      if (line.startsWith('a=fmtp:') && i > 0) {
+      if (line.startsWith("a=fmtp:") && i > 0) {
         // Check if the corresponding rtpmap is opus
         const payloadMatch = line.match(/^a=fmtp:(\d+)/);
         if (payloadMatch) {
           const pt = payloadMatch[1];
           // Look for the rtpmap for this payload type
           const rtpmapLine = lines.find(
-            (l) => l.startsWith(`a=rtpmap:${pt} `) && l.toLowerCase().includes('opus'),
+            (l) => l.startsWith(`a=rtpmap:${pt} `) && l.toLowerCase().includes("opus"),
           );
           if (rtpmapLine) {
             // Replace the fmtp line we just pushed with enhanced params
-            const existingParams = line.substring(line.indexOf(' ') + 1);
+            const existingParams = line.substring(line.indexOf(" ") + 1);
             const params = new Map<string, string>();
 
             // Parse existing params
-            for (const param of existingParams.split(';')) {
-              const [key, val] = param.trim().split('=');
+            for (const param of existingParams.split(";")) {
+              const [key, val] = param.trim().split("=");
               if (key && val !== undefined) {
                 params.set(key.trim(), val.trim());
               }
             }
 
             // Set quality params
-            params.set('maxaveragebitrate', '64000');
-            params.set('useinbandfec', '1');
-            params.set('usedtx', '0');
-            params.set('stereo', '0');
-            params.set('maxplaybackrate', '48000');
-            params.set('cbr', '0');
-            params.set('ptime', '60');
+            params.set("maxaveragebitrate", "64000");
+            params.set("useinbandfec", "1");
+            params.set("usedtx", "0");
+            params.set("stereo", "0");
+            params.set("maxplaybackrate", "48000");
+            params.set("cbr", "0");
+            params.set("ptime", "60");
 
             const enhanced = `a=fmtp:${pt} ${Array.from(params.entries())
               .map(([k, v]) => `${k}=${v}`)
-              .join(';')}`;
+              .join(";")}`;
 
             // Replace the last pushed line
             result[result.length - 1] = enhanced;
@@ -344,6 +421,6 @@ export class CallManager {
       }
     }
 
-    return result.join('\r\n');
+    return result.join("\r\n");
   }
 }

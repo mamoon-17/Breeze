@@ -9,6 +9,7 @@ export interface CallSession {
   conversationId: string;
   callerId: string;
   calleeId: string;
+  callType?: 'audio' | 'video';
   state: 'ringing' | 'active' | 'ended';
   ringTimeout: ReturnType<typeof setTimeout> | null;
   createdAt: Date;

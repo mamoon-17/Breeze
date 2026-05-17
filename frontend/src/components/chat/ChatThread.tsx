@@ -60,12 +60,9 @@ export function ChatThread({
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-center">
         <div className="max-w-sm text-sm text-muted-foreground">
-          <p className="font-display text-2xl text-foreground">
-            Send the first message.
-          </p>
+          <p className="font-display text-2xl text-foreground">Send the first message.</p>
           <p className="mt-2">
-            Start with a hello — Breeze handles delivery and read receipts in
-            real time.
+            Start with a hello — Breeze handles delivery and read receipts in real time.
           </p>
         </div>
       </div>
@@ -76,10 +73,7 @@ export function ChatThread({
   for (const m of members) memberMap.set(m.userId, m);
 
   return (
-    <div
-      ref={scrollRef}
-      className="scroll-soft flex-1 overflow-y-auto p-6 md:p-8"
-    >
+    <div ref={scrollRef} className="scroll-soft flex-1 overflow-y-auto p-6 md:p-8">
       <div className="space-y-6">
         {messages.map((m, idx) => {
           // System messages (e.g. call events) render as centered dividers
@@ -88,11 +82,9 @@ export function ChatThread({
           }
 
           const mine = m.senderId === currentUserId;
-          const showHeader =
-            idx === 0 || messages[idx - 1].senderId !== m.senderId;
+          const showHeader = idx === 0 || messages[idx - 1].senderId !== m.senderId;
           const sender = memberMap.get(m.senderId);
-          const name =
-            sender?.user?.displayName ?? sender?.user?.email ?? "Someone";
+          const name = sender?.user?.displayName ?? sender?.user?.email ?? "Someone";
           const ts = (() => {
             try {
               return format(new Date(m.sentAt ?? m.createdAt), "h:mm a");
@@ -119,14 +111,34 @@ export function ChatThread({
 }
 
 function SystemMessageBubble({ message }: { message: ChatMessage }) {
-  const metadata = message.metadata as {
-    outcome?: string;
-    durationSeconds?: number | null;
-  } | null;
+  const metadata = normalizeCallMetadata(message.metadata);
 
-  const isCall = message.subtype === "call";
+  const isCall =
+    message.subtype === "call" ||
+    Boolean(metadata?.outcome || metadata?.durationSeconds || metadata?.callType || metadata?.type);
   const outcome = metadata?.outcome ?? "";
   const isCompleted = outcome === "completed";
+  const callType = normalizeCallType(metadata, message.message);
+  const callLabel = callType === "video" ? "Video call" : "Voice call";
+  const callLabelLower = callType === "video" ? "video call" : "voice call";
+  const durationText = formatCallDuration(metadata?.durationSeconds ?? null);
+  const displayMessage = (() => {
+    if (!isCall) return message.message;
+    switch (outcome) {
+      case "completed":
+        return durationText ? `${callLabel} · ${durationText}` : callLabel;
+      case "missed":
+        return `Missed ${callLabelLower}`;
+      case "rejected":
+        return "Declined";
+      case "cancelled":
+        return `Cancelled ${callLabelLower}`;
+      case "failed":
+        return "Call failed";
+      default:
+        return message.message;
+    }
+  })();
 
   return (
     <div className="flex items-center justify-center gap-2 py-2">
@@ -151,12 +163,10 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
             strokeLinejoin="round"
           >
             <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-            {outcome === "missed" && (
-              <line x1="1" y1="1" x2="23" y2="23" />
-            )}
+            {outcome === "missed" && <line x1="1" y1="1" x2="23" y2="23" />}
           </svg>
         )}
-        <span className="font-medium">{message.message}</span>
+        <span className="font-medium">{displayMessage}</span>
         {isCall && isCompleted && (
           <span className="text-[10px] opacity-60">
             {(() => {
@@ -173,6 +183,71 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+type CallMetadata = {
+  outcome?: string;
+  durationSeconds?: number | null;
+  callType?: string;
+  type?: string;
+};
+
+function normalizeCallMetadata(raw: ChatMessage["metadata"]): CallMetadata | null {
+  if (!raw) return null;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as CallMetadata;
+      return typeof parsed === "object" && parsed !== null ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === "object") return raw as CallMetadata;
+  return null;
+}
+
+function normalizeCallType(metadata: CallMetadata | null, fallbackText: string): "audio" | "video" {
+  const fromMetadata = findCallTypeInMetadata(metadata);
+  if (fromMetadata) return fromMetadata;
+  if (fallbackText.toLowerCase().includes("video call")) return "video";
+  return "audio";
+}
+
+function findCallTypeInMetadata(value: unknown): "audio" | "video" | null {
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    if (normalized === "video") return "video";
+    if (normalized === "audio" || normalized === "voice") return "audio";
+    return null;
+  }
+
+  if (!value || typeof value !== "object") return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCallTypeInMetadata(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    const keyLower = key.toLowerCase();
+    if (val === true) {
+      if (keyLower.includes("video")) return "video";
+      if (keyLower.includes("audio") || keyLower.includes("voice")) return "audio";
+    }
+    const found = findCallTypeInMetadata(val);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function formatCallDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}m ${secs}s`;
+}
 
 function TypingBubble({ name }: { name: string }) {
   return (
