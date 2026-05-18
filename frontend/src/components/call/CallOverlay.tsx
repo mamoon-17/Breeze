@@ -135,6 +135,26 @@ function SwitchCameraIcon({ className }: { className?: string }) {
   );
 }
 
+function ScreenShareIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+      <path d="M7 12l3-3 3 3" />
+      <line x1="10" y1="9" x2="10" y2="15" />
+    </svg>
+  );
+}
+
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export function CallOverlay() {
@@ -145,6 +165,8 @@ export function CallOverlay() {
     callType,
     isMuted,
     isCameraOff,
+    isScreenSharing,
+    isPeerScreenSharing,
     videoFallbackToAudio,
     localStream,
     remoteStream,
@@ -158,6 +180,8 @@ export function CallOverlay() {
     toggleMute,
     toggleCamera,
     switchCamera,
+    startScreenShare,
+    stopScreenShare,
     hideOverlay,
   } = useCall();
   const { user } = useAuth();
@@ -342,6 +366,10 @@ export function CallOverlay() {
   const displayName = peerName ?? "Unknown";
   const localDisplayName = user?.displayName ?? user?.email ?? displayName;
   const isVideoActive = callState === "active" && callType === "video" && !videoFallbackToAudio;
+  const bannerStackOffset =
+    (videoFallbackToAudio && !fallbackDismissed ? 48 : 0) + (isReconnecting ? 48 : 0);
+  const screenShareBannerTop = 16 + bannerStackOffset;
+  const peerShareLabelTop = 16 + bannerStackOffset + (isScreenSharing ? 48 : 0);
 
   return (
     <div
@@ -463,6 +491,65 @@ export function CallOverlay() {
           }}
         >
           <span>Reconnecting…</span>
+        </div>
+      )}
+
+      {isVideoActive && isScreenSharing && (
+        <div
+          style={{
+            position: "fixed",
+            top: screenShareBannerTop,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 4,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            border: "1px solid rgba(255,255,255,0.18)",
+            borderRadius: 999,
+            background: "rgba(15,23,42,0.82)",
+            color: "white",
+            padding: "9px 12px 9px 16px",
+            boxShadow: "0 12px 32px rgba(0,0,0,0.28)",
+            fontFamily: "'Inter', -apple-system, sans-serif",
+            fontSize: 13,
+          }}
+        >
+          <span>You are sharing your screen</span>
+          <button
+            type="button"
+            onClick={stopScreenShare}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "white",
+              textDecoration: "underline",
+              cursor: "pointer",
+              padding: 0,
+              fontSize: 13,
+              fontFamily: "'Inter', -apple-system, sans-serif",
+            }}
+          >
+            Stop Sharing
+          </button>
+        </div>
+      )}
+
+      {isVideoActive && isPeerScreenSharing && (
+        <div
+          style={{
+            position: "fixed",
+            top: peerShareLabelTop,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 4,
+            color: "rgba(255,255,255,0.6)",
+            fontSize: 12,
+            fontFamily: "'Inter', -apple-system, sans-serif",
+            textShadow: "0 2px 10px rgba(0,0,0,0.55)",
+          }}
+        >
+          {displayName} is sharing their screen
         </div>
       )}
 
@@ -687,6 +774,20 @@ export function CallOverlay() {
                   ) : (
                     <CameraIcon className="size-5" />
                   )}
+                </button>
+              )}
+              {isVideoActive && (
+                <button
+                  className="call-btn-sm"
+                  onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+                  aria-label={isScreenSharing ? "Stop screen sharing" : "Start screen sharing"}
+                  style={
+                    isScreenSharing
+                      ? { background: "rgba(46,213,115,0.3)", borderColor: "#2ed573" }
+                      : {}
+                  }
+                >
+                  <ScreenShareIcon className="size-5" />
                 </button>
               )}
               <button

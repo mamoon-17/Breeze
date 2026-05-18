@@ -14,7 +14,7 @@ import { SocketStateService } from '../socket/socket-state.service';
 import { WsJwtMiddleware } from '../auth/middlewares/ws-jwt.middleware';
 import { CallService } from './call.service';
 import { CallSessionMap } from './call-session.map';
-import { CallClientEvents } from './call.events';
+import { CallClientEvents, CallServerEvents } from './call.events';
 import { CallInitiateDto } from './dto/call-initiate.dto';
 import { CallIdDto } from './dto/call-id.dto';
 import { CallAnswerDto } from './dto/call-answer.dto';
@@ -175,6 +175,54 @@ export class CallGateway implements OnGatewayInit, OnGatewayDisconnect {
     const userId = client.data.user.id;
     await this.callService.iceFailed(dto.callId, userId);
     return { ok: true };
+  }
+
+  @SubscribeMessage(CallClientEvents.SCREEN_SHARE_STARTED)
+  async handleScreenShareStarted(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: { callId: string },
+  ): Promise<void> {
+    const session = await this.callSessionMap.get(dto.callId);
+    if (!session) return;
+
+    const userId = client.data.user?.id;
+    if (!userId) return;
+    if (session.callerId !== userId && session.calleeId !== userId) return;
+
+    const otherSocketId =
+      session.callerId === userId
+        ? session.calleeSocketId
+        : session.callerSocketId;
+
+    if (otherSocketId) {
+      this.server
+        .to(otherSocketId)
+        .emit(CallServerEvents.SCREEN_SHARE_STARTED, { callId: dto.callId });
+    }
+  }
+
+  @SubscribeMessage(CallClientEvents.SCREEN_SHARE_STOPPED)
+  async handleScreenShareStopped(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: { callId: string },
+  ): Promise<void> {
+    const session = await this.callSessionMap.get(dto.callId);
+    if (!session) return;
+
+    const userId = client.data.user?.id;
+    if (!userId) return;
+    if (session.callerId !== userId && session.calleeId !== userId) return;
+
+    const otherSocketId =
+      session.callerId === userId
+        ? session.calleeSocketId
+        : session.callerSocketId;
+
+    if (otherSocketId) {
+      this.server
+        .to(otherSocketId)
+        .emit(CallServerEvents.SCREEN_SHARE_STOPPED, { callId: dto.callId });
+    }
   }
 
   // ─── Reconnect handler (Phase 12) ─────────────────────────────────────────

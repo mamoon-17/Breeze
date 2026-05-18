@@ -49,6 +49,8 @@ interface CallContextValue {
   callType: CallType;
   isMuted: boolean;
   isCameraOff: boolean;
+  isScreenSharing: boolean;
+  isPeerScreenSharing: boolean;
   videoFallbackToAudio: boolean;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
@@ -70,6 +72,8 @@ interface CallContextValue {
   toggleMute: () => void;
   toggleCamera: () => void;
   switchCamera: () => void;
+  startScreenShare: () => Promise<void>;
+  stopScreenShare: () => Promise<void>;
   showOverlay: () => void;
   hideOverlay: () => void;
 }
@@ -145,6 +149,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [callType, setCallType] = useState<CallType>("audio");
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [isPeerScreenSharing, setIsPeerScreenSharing] = useState(false);
   const [videoFallbackToAudio, setVideoFallbackToAudio] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
@@ -193,6 +199,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setCallType("audio");
     setIsMuted(false);
     setIsCameraOff(false);
+    setIsScreenSharing(false);
+    setIsPeerScreenSharing(false);
     setVideoFallbackToAudio(false);
     setLocalStream(null);
     setRemoteStream(null);
@@ -246,6 +254,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
       // Show brief "ended" state before resetting
       setCallState("ended");
       setIsReconnecting(false);
+      setIsScreenSharing(false);
+      setIsPeerScreenSharing(false);
       setTimeout(() => reset(), 1500);
     };
 
@@ -279,8 +289,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setIsReconnecting(false);
     };
 
+    const onPeerScreenShareStarted = () => {
+      setIsPeerScreenSharing(true);
+    };
+
+    const onPeerScreenShareStopped = () => {
+      setIsPeerScreenSharing(false);
+    };
+
     socket.on("connect", onConnect);
     socket.on("call:peer-reconnected", onPeerReconnected);
+    socket.on("call:screen-share-started", onPeerScreenShareStarted);
+    socket.on("call:screen-share-stopped", onPeerScreenShareStopped);
     socket.on("call:incoming", onIncoming);
     socket.on("call:answered", onAnswered);
     socket.on("call:ice-candidate", onIceCandidate);
@@ -294,9 +314,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
     });
     socket.on("call:error", onError);
 
+    callManagerRef.current.onScreenShareStopped = () => {
+      setIsScreenSharing(false);
+      const activeCallId = callManagerRef.current.activeCallId ?? callId;
+      if (activeCallId) {
+        socket.emit("call:screen-share-stopped", { callId: activeCallId });
+      }
+    };
+
     return () => {
       socket.off("connect", onConnect);
       socket.off("call:peer-reconnected", onPeerReconnected);
+      socket.off("call:screen-share-started", onPeerScreenShareStarted);
+      socket.off("call:screen-share-stopped", onPeerScreenShareStopped);
       socket.off("call:incoming", onIncoming);
       socket.off("call:answered", onAnswered);
       socket.off("call:ice-candidate", onIceCandidate);
@@ -304,6 +334,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket.off("call:busy", onBusy);
       socket.off("call:missed");
       socket.off("call:error", onError);
+      callManagerRef.current.onScreenShareStopped = null;
     };
     // We intentionally re-subscribe when callState/callId change so our closures
     // see current values.
@@ -417,6 +448,29 @@ export function CallProvider({ children }: { children: ReactNode }) {
       .catch((err) => console.warn("[CallContext] Failed to switch camera:", err));
   }, []);
 
+  const startScreenShare = useCallback(async () => {
+    try {
+      await callManagerRef.current.startScreenShare();
+      setIsScreenSharing(true);
+      const activeCallId = callManagerRef.current.activeCallId ?? callId;
+      if (activeCallId) {
+        getSocket().emit("call:screen-share-started", { callId: activeCallId });
+      }
+    } catch (err) {
+      console.error("Screen share failed:", err);
+      toast.error("Could not start screen share");
+    }
+  }, [callId]);
+
+  const stopScreenShare = useCallback(async () => {
+    await callManagerRef.current.stopScreenShare();
+    setIsScreenSharing(false);
+    const activeCallId = callManagerRef.current.activeCallId ?? callId;
+    if (activeCallId) {
+      getSocket().emit("call:screen-share-stopped", { callId: activeCallId });
+    }
+  }, [callId]);
+
   const showOverlay = useCallback(() => setOverlayVisible(true), []);
   const hideOverlay = useCallback(() => setOverlayVisible(false), []);
 
@@ -431,6 +485,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
         callType,
         isMuted,
         isCameraOff,
+        isScreenSharing,
+        isPeerScreenSharing,
         videoFallbackToAudio,
         localStream,
         remoteStream,
@@ -445,6 +501,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
         toggleMute,
         toggleCamera,
         switchCamera,
+        startScreenShare,
+        stopScreenShare,
         showOverlay,
         hideOverlay,
       }}

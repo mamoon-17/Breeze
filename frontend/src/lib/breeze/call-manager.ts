@@ -27,6 +27,8 @@ export class CallManager {
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private cameraTrack: MediaStreamTrack | null = null;
+  private screenTrack: MediaStreamTrack | null = null;
+  private originalVideoTrack: MediaStreamTrack | null = null;
   private facingMode: "user" | "environment" = "user";
   private callId: string | null = null;
   private state: CallManagerState = "idle";
@@ -35,6 +37,8 @@ export class CallManager {
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCandidates: RTCIceCandidate[] = [];
   videoFallbackToAudio = false;
+  isScreenSharing = false;
+  onScreenShareStopped: (() => void) | null = null;
 
   static getInstance(): CallManager {
     if (!instance) instance = new CallManager();
@@ -186,6 +190,41 @@ export class CallManager {
     this.cameraTrack = newTrack;
   }
 
+  async startScreenShare(): Promise<void> {
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "monitor" },
+      audio: false,
+    });
+    const screenTrack = screenStream.getVideoTracks()[0];
+    if (!screenTrack) return;
+
+    // Store original camera track so we can restore it
+    const sender = this.pc?.getSenders().find((s) => s.track?.kind === "video");
+    if (!sender) return;
+    this.originalVideoTrack = sender.track ?? null;
+
+    await sender.replaceTrack(screenTrack);
+    this.screenTrack = screenTrack;
+    this.isScreenSharing = true;
+
+    // When user stops sharing via browser UI (clicks Stop in browser bar)
+    screenTrack.onended = () => {
+      this.stopScreenShare().catch(() => {});
+      this.onScreenShareStopped?.();
+    };
+  }
+
+  async stopScreenShare(): Promise<void> {
+    if (!this.screenTrack) return;
+    const sender = this.pc?.getSenders().find((s) => s.track?.kind === "video");
+    if (sender && this.originalVideoTrack) {
+      await sender.replaceTrack(this.originalVideoTrack);
+    }
+    this.screenTrack.stop();
+    this.screenTrack = null;
+    this.isScreenSharing = false;
+  }
+
   async initializeMedia(type: CallType): Promise<MediaStream> {
     if (this.localStream) return this.localStream;
 
@@ -241,6 +280,11 @@ export class CallManager {
       this.localStream = null;
     }
 
+    if (this.screenTrack) {
+      this.screenTrack.stop();
+      this.screenTrack = null;
+    }
+
     if (this.pc) {
       this.pc.onicecandidate = null;
       this.pc.oniceconnectionstatechange = null;
@@ -252,6 +296,9 @@ export class CallManager {
     this.remoteStream = null;
     this.cameraTrack = null;
     this.videoFallbackToAudio = false;
+    this.originalVideoTrack = null;
+    this.isScreenSharing = false;
+    this.onScreenShareStopped = null;
     this.callId = null;
     this.pendingCandidates = [];
     this.iceRestartAttempted = false;

@@ -13,6 +13,8 @@ export const CallClientEvents = {
   END: 'call:end',
   ICE_FAILED: 'call:ice-failed',
   RECONNECT: 'call:reconnect',
+  SCREEN_SHARE_STARTED: 'call:screen-share-started',
+  SCREEN_SHARE_STOPPED: 'call:screen-share-stopped',
 } as const;
 
 /** Server → Client events (emitted via SocketStateService.emitToUser). */
@@ -26,6 +28,8 @@ export const CallServerEvents = {
   ENDED: 'call:ended',
   ERROR: 'call:error',
   PEER_RECONNECTED: 'call:peer-reconnected',
+  SCREEN_SHARE_STARTED: 'call:screen-share-started',
+  SCREEN_SHARE_STOPPED: 'call:screen-share-stopped',
 } as const;
 
 /** Call outcome values persisted in CallRecord. */
