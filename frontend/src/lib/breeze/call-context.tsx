@@ -27,6 +27,7 @@ import {
   emitCallReject,
   emitCallCancel,
   emitCallEnd,
+  emitCallIceFailed,
 } from "./socket";
 import type {
   CallState,
@@ -160,6 +161,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   // Refs for the incoming offer SDP (needed when callee accepts)
   const incomingOfferRef = useRef<string | null>(null);
+  const isPeerScreenSharingRef = useRef(false);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const callManagerRef = useRef(CallManager.getInstance());
 
@@ -201,6 +203,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setIsCameraOff(false);
     setIsScreenSharing(false);
     setIsPeerScreenSharing(false);
+    isPeerScreenSharingRef.current = false;
     setVideoFallbackToAudio(false);
     setLocalStream(null);
     setRemoteStream(null);
@@ -256,6 +259,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setIsReconnecting(false);
       setIsScreenSharing(false);
       setIsPeerScreenSharing(false);
+      isPeerScreenSharingRef.current = false;
       setTimeout(() => reset(), 1500);
     };
 
@@ -291,10 +295,22 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     const onPeerScreenShareStarted = () => {
       setIsPeerScreenSharing(true);
+      isPeerScreenSharingRef.current = true;
     };
 
     const onPeerScreenShareStopped = () => {
       setIsPeerScreenSharing(false);
+      isPeerScreenSharingRef.current = false;
+    };
+
+    const onIceFailed = () => {
+      callManagerRef.current.cleanup();
+      setCallState("ended");
+      setIsReconnecting(false);
+      setIsScreenSharing(false);
+      setIsPeerScreenSharing(false);
+      isPeerScreenSharingRef.current = false;
+      setTimeout(() => reset(), 1500);
     };
 
     socket.on("connect", onConnect);
@@ -304,6 +320,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socket.on("call:incoming", onIncoming);
     socket.on("call:answered", onAnswered);
     socket.on("call:ice-candidate", onIceCandidate);
+    socket.on("call:ice-failed", onIceFailed);
     socket.on("call:ended", onEnded);
     socket.on("call:busy", onBusy);
     socket.on("call:missed", () => {
@@ -322,6 +339,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    callManagerRef.current.onIceFailed = () => {
+      const activeCallId = callManagerRef.current.activeCallId;
+      if (activeCallId) emitCallIceFailed(activeCallId);
+    };
+
     return () => {
       socket.off("connect", onConnect);
       socket.off("call:peer-reconnected", onPeerReconnected);
@@ -330,11 +352,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket.off("call:incoming", onIncoming);
       socket.off("call:answered", onAnswered);
       socket.off("call:ice-candidate", onIceCandidate);
+      socket.off("call:ice-failed", onIceFailed);
       socket.off("call:ended", onEnded);
       socket.off("call:busy", onBusy);
       socket.off("call:missed");
       socket.off("call:error", onError);
       callManagerRef.current.onScreenShareStopped = null;
+      callManagerRef.current.onIceFailed = null;
     };
     // We intentionally re-subscribe when callState/callId change so our closures
     // see current values.
@@ -449,6 +473,10 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const startScreenShare = useCallback(async () => {
+    if (isPeerScreenSharingRef.current) {
+      toast.error("Can't share screen while the other person is sharing");
+      return;
+    }
     try {
       await callManagerRef.current.startScreenShare();
       setIsScreenSharing(true);

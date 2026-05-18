@@ -303,7 +303,7 @@ export class CallService {
         conversationId: session.conversationId,
         callerId: session.callerId,
         calleeId: session.calleeId,
-        callType: 'voice',
+        callType: session.callType ?? 'audio',
         outcome,
         durationSeconds,
         startedAt: session.createdAt,

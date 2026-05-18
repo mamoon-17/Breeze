@@ -10,7 +10,7 @@
  * - Cleanup on call end
  */
 
-import { emitCallIceCandidate, emitCallIceFailed } from "./socket";
+import { emitCallIceCandidate } from "./socket";
 
 export type CallManagerState = "idle" | "connecting" | "connected" | "failed";
 export type CallType = "audio" | "video";
@@ -29,6 +29,7 @@ export class CallManager {
   private cameraTrack: MediaStreamTrack | null = null;
   private screenTrack: MediaStreamTrack | null = null;
   private originalVideoTrack: MediaStreamTrack | null = null;
+  private replacingTrackUntil: number = 0;
   private facingMode: "user" | "environment" = "user";
   private callId: string | null = null;
   private state: CallManagerState = "idle";
@@ -39,6 +40,7 @@ export class CallManager {
   videoFallbackToAudio = false;
   isScreenSharing = false;
   onScreenShareStopped: (() => void) | null = null;
+  onIceFailed: (() => void) | null = null;
 
   static getInstance(): CallManager {
     if (!instance) instance = new CallManager();
@@ -191,6 +193,10 @@ export class CallManager {
   }
 
   async startScreenShare(): Promise<void> {
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
     const screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: { displaySurface: "monitor" },
       audio: false,
@@ -203,6 +209,7 @@ export class CallManager {
     if (!sender) return;
     this.originalVideoTrack = sender.track ?? null;
 
+    this.replacingTrackUntil = Date.now() + 3000;
     await sender.replaceTrack(screenTrack);
     this.screenTrack = screenTrack;
     this.isScreenSharing = true;
@@ -216,9 +223,21 @@ export class CallManager {
 
   async stopScreenShare(): Promise<void> {
     if (!this.screenTrack) return;
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
     const sender = this.pc?.getSenders().find((s) => s.track?.kind === "video");
     if (sender && this.originalVideoTrack) {
-      await sender.replaceTrack(this.originalVideoTrack);
+      if (this.originalVideoTrack.readyState === "live") {
+        this.replacingTrackUntil = Date.now() + 3000;
+        await sender.replaceTrack(this.originalVideoTrack);
+      } else {
+        // Original camera track was stopped (user turned camera off)
+        // Replace with null to send a black track rather than crashing
+        this.replacingTrackUntil = Date.now() + 3000;
+        await sender.replaceTrack(null);
+      }
     }
     this.screenTrack.stop();
     this.screenTrack = null;
@@ -299,9 +318,11 @@ export class CallManager {
     this.originalVideoTrack = null;
     this.isScreenSharing = false;
     this.onScreenShareStopped = null;
+    this.onIceFailed = null;
     this.callId = null;
     this.pendingCandidates = [];
     this.iceRestartAttempted = false;
+    this.replacingTrackUntil = 0;
     this.setState("idle");
   }
 
@@ -356,7 +377,7 @@ export class CallManager {
 
         case "disconnected":
           // 5s grace period before treating as failed
-          if (!this.disconnectTimer) {
+          if (!this.disconnectTimer && Date.now() > this.replacingTrackUntil) {
             this.disconnectTimer = setTimeout(() => {
               if (this.pc?.iceConnectionState === "disconnected") {
                 if (!this.iceRestartAttempted) {
@@ -371,7 +392,7 @@ export class CallManager {
           break;
 
         case "failed":
-          this.handleIceFailed();
+          if (Date.now() > this.replacingTrackUntil) this.handleIceFailed();
           break;
       }
     };
@@ -393,10 +414,9 @@ export class CallManager {
   }
 
   private handleIceFailed(): void {
-    if (this.callId) {
-      emitCallIceFailed(this.callId);
-    }
+    if (Date.now() <= this.replacingTrackUntil) return;
     this.setState("failed");
+    this.onIceFailed?.();
   }
 
   private async flushPendingCandidates(): Promise<void> {

@@ -5,7 +5,7 @@ import {
   Index,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import type { CallOutcome, CallType } from './call.events';
+import type { CallOutcome } from './call.events';
 
 @Entity('call_records')
 export class CallRecord {
@@ -24,8 +24,8 @@ export class CallRecord {
   @Column({ type: 'uuid' })
   calleeId: string;
 
-  @Column({ type: 'varchar', length: 16, default: 'voice' })
-  callType: CallType;
+  @Column({ type: 'varchar', length: 16, default: 'audio' })
+  callType: 'audio' | 'video';
 
   @Column({ type: 'varchar', length: 16 })
   outcome: CallOutcome;
