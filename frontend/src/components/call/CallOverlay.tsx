@@ -235,6 +235,14 @@ export function CallOverlay() {
   }, [remoteStream]);
 
   useEffect(() => {
+    const vid = remoteVideoRef.current;
+    if (!vid || !remoteStream) return;
+    if (vid.srcObject === remoteStream) return;
+    vid.srcObject = remoteStream;
+    vid.play().catch(() => {});
+  }, [isPeerScreenSharing, remoteStream]);
+
+  useEffect(() => {
     const vid = localVideoRef.current;
     if (!vid || !localStream) return;
     if (vid.srcObject === localStream) return;
@@ -365,7 +373,10 @@ export function CallOverlay() {
 
   const displayName = peerName ?? "Unknown";
   const localDisplayName = user?.displayName ?? user?.email ?? displayName;
-  const isVideoActive = callState === "active" && callType === "video" && !videoFallbackToAudio;
+  const isVideoActive =
+    callState === "active" &&
+    (callType === "video" || isPeerScreenSharing) &&
+    !videoFallbackToAudio;
   const bannerStackOffset =
     (videoFallbackToAudio && !fallbackDismissed ? 48 : 0) + (isReconnecting ? 48 : 0);
   const screenShareBannerTop = 16 + bannerStackOffset;
@@ -553,7 +564,7 @@ export function CallOverlay() {
         </div>
       )}
 
-      {isVideoActive && (
+      {callState === "active" && (callType === "video" || isScreenSharing) && (
         <div
           onMouseDown={(evt) => {
             setDragOffset({ x: evt.clientX - pipPosition.x, y: evt.clientY - pipPosition.y });
@@ -776,7 +787,7 @@ export function CallOverlay() {
                   )}
                 </button>
               )}
-              {isVideoActive && (
+              {callState === "active" && (
                 <button
                   className="call-btn-sm"
                   onClick={isScreenSharing ? stopScreenShare : startScreenShare}

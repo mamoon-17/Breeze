@@ -177,6 +177,46 @@ export class CallGateway implements OnGatewayInit, OnGatewayDisconnect {
     return { ok: true };
   }
 
+  @SubscribeMessage(CallClientEvents.REOFFER)
+  async handleReoffer(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: { callId: string; sdp: string },
+  ): Promise<void> {
+    const session = await this.callSessionMap.get(dto.callId);
+    if (!session) return;
+    const user = client.data.user;
+    if (session.callerId !== user.id && session.calleeId !== user.id) return;
+    const otherSocketId =
+      session.callerId === user.id
+        ? session.calleeSocketId
+        : session.callerSocketId;
+    if (otherSocketId) {
+      this.server
+        .to(otherSocketId)
+        .emit(CallServerEvents.REOFFER, { callId: dto.callId, sdp: dto.sdp });
+    }
+  }
+
+  @SubscribeMessage(CallClientEvents.REANSWER)
+  async handleReanswer(
+    @ConnectedSocket() client: AuthenticatedSocket,
+    @MessageBody() dto: { callId: string; sdp: string },
+  ): Promise<void> {
+    const session = await this.callSessionMap.get(dto.callId);
+    if (!session) return;
+    const user = client.data.user;
+    if (session.callerId !== user.id && session.calleeId !== user.id) return;
+    const otherSocketId =
+      session.callerId === user.id
+        ? session.calleeSocketId
+        : session.callerSocketId;
+    if (otherSocketId) {
+      this.server
+        .to(otherSocketId)
+        .emit(CallServerEvents.REANSWER, { callId: dto.callId, sdp: dto.sdp });
+    }
+  }
+
   @SubscribeMessage(CallClientEvents.SCREEN_SHARE_STARTED)
   async handleScreenShareStarted(
     @ConnectedSocket() client: AuthenticatedSocket,

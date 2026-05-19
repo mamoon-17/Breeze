@@ -313,6 +313,31 @@ export function CallProvider({ children }: { children: ReactNode }) {
       setTimeout(() => reset(), 1500);
     };
 
+    const onReoffer = async (evt: { callId: string; sdp: string }) => {
+      if (evt.callId !== callId) return;
+      const mgr = callManagerRef.current;
+      if (!mgr) return;
+      const sdp = JSON.parse(evt.sdp) as RTCSessionDescriptionInit;
+      await mgr.pc?.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await mgr.pc?.createAnswer();
+      if (!answer || !mgr.pc) return;
+      await mgr.pc.setLocalDescription(answer);
+      getSocket().emit("call:reanswer", {
+        callId: evt.callId,
+        sdp: JSON.stringify(mgr.pc.localDescription),
+      });
+      setIsPeerScreenSharing(true);
+      isPeerScreenSharingRef.current = true;
+    };
+
+    const onReanswer = async (evt: { callId: string; sdp: string }) => {
+      if (evt.callId !== callId) return;
+      const mgr = callManagerRef.current;
+      if (!mgr) return;
+      const sdp = JSON.parse(evt.sdp) as RTCSessionDescriptionInit;
+      await mgr.pc?.setRemoteDescription(new RTCSessionDescription(sdp));
+    };
+
     socket.on("connect", onConnect);
     socket.on("call:peer-reconnected", onPeerReconnected);
     socket.on("call:screen-share-started", onPeerScreenShareStarted);
@@ -321,6 +346,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socket.on("call:answered", onAnswered);
     socket.on("call:ice-candidate", onIceCandidate);
     socket.on("call:ice-failed", onIceFailed);
+    socket.on("call:reoffer", onReoffer);
+    socket.on("call:reanswer", onReanswer);
     socket.on("call:ended", onEnded);
     socket.on("call:busy", onBusy);
     socket.on("call:missed", () => {
@@ -344,6 +371,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
       if (activeCallId) emitCallIceFailed(activeCallId);
     };
 
+    callManagerRef.current.onNegotiationNeeded = (offerSdp: string) => {
+      const activeId = callManagerRef.current.activeCallId ?? callId;
+      if (!activeId) return;
+      getSocket().emit("call:reoffer", { callId: activeId, sdp: offerSdp });
+    };
+
     return () => {
       socket.off("connect", onConnect);
       socket.off("call:peer-reconnected", onPeerReconnected);
@@ -353,12 +386,15 @@ export function CallProvider({ children }: { children: ReactNode }) {
       socket.off("call:answered", onAnswered);
       socket.off("call:ice-candidate", onIceCandidate);
       socket.off("call:ice-failed", onIceFailed);
+      socket.off("call:reoffer", onReoffer);
+      socket.off("call:reanswer", onReanswer);
       socket.off("call:ended", onEnded);
       socket.off("call:busy", onBusy);
       socket.off("call:missed");
       socket.off("call:error", onError);
       callManagerRef.current.onScreenShareStopped = null;
       callManagerRef.current.onIceFailed = null;
+      callManagerRef.current.onNegotiationNeeded = null;
     };
     // We intentionally re-subscribe when callState/callId change so our closures
     // see current values.
