@@ -1,16 +1,13 @@
-import {
-  Outlet,
-  Link,
-  createRootRoute,
-  HeadContent,
-  Scripts,
-} from "@tanstack/react-router";
+import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
 import { AuthProvider } from "@/lib/breeze/auth-context";
 import { CallProvider } from "@/lib/breeze/call-context";
 import { CallOverlay } from "@/components/call/CallOverlay";
 import { CallFloater } from "@/components/call/CallFloater";
+import { GroupCallProvider } from "../contexts/GroupCallContext";
+import GroupCallOverlay from "../components/group-call/GroupCallOverlay";
+import IncomingGroupCallBanner from "../components/group-call/IncomingGroupCallBanner";
 import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
@@ -18,9 +15,7 @@ function NotFoundComponent() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="font-display text-7xl text-foreground">404</h1>
-        <h2 className="mt-4 text-xl font-semibold text-foreground">
-          Page not found
-        </h2>
+        <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           The page you're looking for has drifted away on the breeze.
         </p>
@@ -85,13 +80,16 @@ function RootShell({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   return (
     <AuthProvider>
-      <CallProvider>
-        <Outlet />
-        <CallOverlay />
-        <CallFloater />
-      </CallProvider>
+      <GroupCallProvider>
+        <CallProvider>
+          <Outlet />
+          <CallOverlay />
+          <CallFloater />
+          <GroupCallOverlay />
+          <IncomingGroupCallBanner />
+        </CallProvider>
+      </GroupCallProvider>
       <Toaster />
     </AuthProvider>
   );
 }
-

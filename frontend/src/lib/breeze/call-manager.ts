@@ -10,7 +10,7 @@
  * - Cleanup on call end
  */
 
-import { emitCallIceCandidate, emitCallIceFailed } from "./socket";
+import { emitCallIceCandidate } from "./socket";
 
 export type CallManagerState = "idle" | "connecting" | "connected" | "failed";
 export type CallType = "audio" | "video";
@@ -23,10 +23,13 @@ export interface CallManagerCallbacks {
 let instance: CallManager | null = null;
 
 export class CallManager {
-  private pc: RTCPeerConnection | null = null;
+  pc: RTCPeerConnection | null = null;
   private localStream: MediaStream | null = null;
   private remoteStream: MediaStream | null = null;
   private cameraTrack: MediaStreamTrack | null = null;
+  private screenTrack: MediaStreamTrack | null = null;
+  private originalVideoTrack: MediaStreamTrack | null = null;
+  private replacingTrackUntil: number = 0;
   private facingMode: "user" | "environment" = "user";
   private callId: string | null = null;
   private state: CallManagerState = "idle";
@@ -35,6 +38,10 @@ export class CallManager {
   private disconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingCandidates: RTCIceCandidate[] = [];
   videoFallbackToAudio = false;
+  isScreenSharing = false;
+  onScreenShareStopped: (() => void) | null = null;
+  onIceFailed: (() => void) | null = null;
+  onNegotiationNeeded: ((offer: string) => void) | null = null;
 
   static getInstance(): CallManager {
     if (!instance) instance = new CallManager();
@@ -43,6 +50,10 @@ export class CallManager {
 
   setCallbacks(cb: CallManagerCallbacks) {
     this.callbacks = cb;
+  }
+
+  get activeCallId(): string | null {
+    return this.callId;
   }
 
   getState(): CallManagerState {
@@ -182,6 +193,73 @@ export class CallManager {
     this.cameraTrack = newTrack;
   }
 
+  async startScreenShare(): Promise<void> {
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
+    const screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "monitor" },
+      audio: false,
+    });
+    const screenTrack = screenStream.getVideoTracks()[0];
+    if (!screenTrack) return;
+
+    const existingSender = this.pc?.getSenders().find((s) => s.track?.kind === "video");
+
+    if (existingSender) {
+      // Video call — replaceTrack on existing video sender
+      this.originalVideoTrack = existingSender.track ?? null;
+      this.replacingTrackUntil = Date.now() + 3000;
+      await existingSender.replaceTrack(screenTrack);
+    } else {
+      // Voice call — add a new video track to the connection
+      if (!this.pc || !this.localStream) return;
+      this.replacingTrackUntil = Date.now() + 3000;
+      this.pc.addTrack(screenTrack, this.localStream);
+      this.originalVideoTrack = null; // no original to restore
+    }
+
+    this.screenTrack = screenTrack;
+    this.isScreenSharing = true;
+
+    screenTrack.onended = () => {
+      this.stopScreenShare().catch(() => {});
+      this.onScreenShareStopped?.();
+    };
+  }
+
+  async stopScreenShare(): Promise<void> {
+    if (!this.screenTrack) return;
+    if (this.disconnectTimer) {
+      clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
+
+    const sender = this.pc?.getSenders().find((s) => s.track === this.screenTrack);
+
+    if (sender) {
+      if (this.originalVideoTrack && this.originalVideoTrack.readyState === "live") {
+        // Video call — restore camera track
+        this.replacingTrackUntil = Date.now() + 3000;
+        await sender.replaceTrack(this.originalVideoTrack);
+      } else if (this.originalVideoTrack === null) {
+        // Voice call — remove the screen track sender entirely
+        this.replacingTrackUntil = Date.now() + 3000;
+        this.pc?.removeTrack(sender);
+      } else {
+        // Camera was off during screen share — replace with null
+        this.replacingTrackUntil = Date.now() + 3000;
+        await sender.replaceTrack(null);
+      }
+    }
+
+    this.screenTrack.stop();
+    this.screenTrack = null;
+    this.isScreenSharing = false;
+    this.originalVideoTrack = null;
+  }
+
   async initializeMedia(type: CallType): Promise<MediaStream> {
     if (this.localStream) return this.localStream;
 
@@ -237,6 +315,11 @@ export class CallManager {
       this.localStream = null;
     }
 
+    if (this.screenTrack) {
+      this.screenTrack.stop();
+      this.screenTrack = null;
+    }
+
     if (this.pc) {
       this.pc.onicecandidate = null;
       this.pc.oniceconnectionstatechange = null;
@@ -248,9 +331,15 @@ export class CallManager {
     this.remoteStream = null;
     this.cameraTrack = null;
     this.videoFallbackToAudio = false;
+    this.originalVideoTrack = null;
+    this.isScreenSharing = false;
+    this.onScreenShareStopped = null;
+    this.onIceFailed = null;
+    this.onNegotiationNeeded = null;
     this.callId = null;
     this.pendingCandidates = [];
     this.iceRestartAttempted = false;
+    this.replacingTrackUntil = 0;
     this.setState("idle");
   }
 
@@ -305,7 +394,7 @@ export class CallManager {
 
         case "disconnected":
           // 5s grace period before treating as failed
-          if (!this.disconnectTimer) {
+          if (!this.disconnectTimer && Date.now() > this.replacingTrackUntil) {
             this.disconnectTimer = setTimeout(() => {
               if (this.pc?.iceConnectionState === "disconnected") {
                 if (!this.iceRestartAttempted) {
@@ -320,8 +409,24 @@ export class CallManager {
           break;
 
         case "failed":
-          this.handleIceFailed();
+          if (Date.now() > this.replacingTrackUntil) this.handleIceFailed();
           break;
+      }
+    };
+
+    this.pc.onnegotiationneeded = async () => {
+      if (!this.pc || !this.callId) return;
+      if (Date.now() <= this.replacingTrackUntil) return; // skip during replaceTrack
+      try {
+        const offer = await this.pc.createOffer();
+        const mungedOffer = {
+          ...offer,
+          sdp: offer.sdp ? CallManager.mungeOpusSdp(offer.sdp) : offer.sdp,
+        };
+        await this.pc.setLocalDescription(mungedOffer);
+        this.onNegotiationNeeded?.(JSON.stringify(this.pc.localDescription));
+      } catch (err) {
+        console.error("Renegotiation failed:", err);
       }
     };
   }
@@ -342,10 +447,9 @@ export class CallManager {
   }
 
   private handleIceFailed(): void {
-    if (this.callId) {
-      emitCallIceFailed(this.callId);
-    }
+    if (Date.now() <= this.replacingTrackUntil) return;
     this.setState("failed");
+    this.onIceFailed?.();
   }
 
   private async flushPendingCandidates(): Promise<void> {

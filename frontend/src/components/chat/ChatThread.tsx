@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage } from "@/lib/breeze/types";
 import { format } from "date-fns";
 import { AttachmentLightbox, type LightboxItem } from "./AttachmentLightbox";
+import { useCall } from "@/lib/breeze/call-context";
 
 interface Member {
   userId: string;
@@ -78,7 +79,14 @@ export function ChatThread({
         {messages.map((m, idx) => {
           // System messages (e.g. call events) render as centered dividers
           if (m.messageType === "system") {
-            return <SystemMessageBubble key={m.id} message={m} />;
+            return (
+              <SystemMessageBubble
+                key={m.id}
+                message={m}
+                currentUserId={currentUserId}
+                memberMap={memberMap}
+              />
+            );
           }
 
           const mine = m.senderId === currentUserId;
@@ -110,7 +118,16 @@ export function ChatThread({
   );
 }
 
-function SystemMessageBubble({ message }: { message: ChatMessage }) {
+function SystemMessageBubble({
+  message,
+  currentUserId,
+  memberMap,
+}: {
+  message: ChatMessage;
+  currentUserId: string;
+  memberMap: Map<string, Member>;
+}) {
+  const { initiateCall } = useCall();
   const metadata = normalizeCallMetadata(message.metadata);
 
   const isCall =
@@ -122,6 +139,13 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
   const callLabel = callType === "video" ? "Video call" : "Voice call";
   const callLabelLower = callType === "video" ? "video call" : "voice call";
   const durationText = formatCallDuration(metadata?.durationSeconds ?? null);
+  const otherPartyId = getOtherCallPartyId(metadata, currentUserId);
+  const otherParty = otherPartyId ? memberMap.get(otherPartyId) : null;
+  const otherPartyName = otherParty?.user?.displayName ?? otherParty?.user?.email ?? "Someone";
+  const canCallBack =
+    isCall &&
+    Boolean(otherPartyId) &&
+    (outcome === "completed" || outcome === "missed" || outcome === "rejected");
   const displayMessage = (() => {
     if (!isCall) return message.message;
     switch (outcome) {
@@ -178,6 +202,27 @@ function SystemMessageBubble({ message }: { message: ChatMessage }) {
             })()}
           </span>
         )}
+        {canCallBack && otherPartyId && (
+          <button
+            type="button"
+            onClick={() => void initiateCall(otherPartyId, message.room, otherPartyName, "audio")}
+            className="flex size-5 items-center justify-center rounded-full opacity-70 transition hover:bg-white/50 hover:opacity-100"
+            aria-label={`Call ${otherPartyName}`}
+            title="Call back"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="size-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -188,6 +233,8 @@ type CallMetadata = {
   durationSeconds?: number | null;
   callType?: string;
   type?: string;
+  callerId?: string;
+  calleeId?: string;
 };
 
 function normalizeCallMetadata(raw: ChatMessage["metadata"]): CallMetadata | null {
@@ -247,6 +294,13 @@ function formatCallDuration(seconds: number | null): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   return `${mins}m ${secs}s`;
+}
+
+function getOtherCallPartyId(metadata: CallMetadata | null, currentUserId: string): string | null {
+  if (!metadata?.callerId || !metadata?.calleeId) return null;
+  if (metadata.callerId === currentUserId) return metadata.calleeId;
+  if (metadata.calleeId === currentUserId) return metadata.callerId;
+  return null;
 }
 
 function TypingBubble({ name }: { name: string }) {

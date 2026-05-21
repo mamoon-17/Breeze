@@ -21,6 +21,7 @@ import {
 } from "@/lib/breeze/socket";
 import { useAuth } from "@/lib/breeze/auth-context";
 import { useCall } from "@/lib/breeze/call-context";
+import { useGroupCall } from "@/contexts/GroupCallContext";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { AssistPanel } from "@/components/chat/AssistPanel";
@@ -36,6 +37,7 @@ function ConversationView() {
   });
   const { user } = useAuth();
   const { initiateCall, callState } = useCall();
+  const { startGroupCall } = useGroupCall();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerDraft, setComposerDraft] = useState("");
   const [members, setMembers] = useState<
@@ -73,8 +75,7 @@ function ConversationView() {
   }, [conversationId]);
 
   const showTyping = typingUsers.size > 0;
-  const typingName =
-    typingUsers.size > 0 ? [...typingUsers.values()].join(", ") : undefined;
+  const typingName = typingUsers.size > 0 ? [...typingUsers.values()].join(", ") : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -82,14 +83,13 @@ function ConversationView() {
     setMessages([]);
     (async () => {
       try {
-        const [{ messages: history }, { members: ms }, { conversations }] =
-          await Promise.all([
-            Conversations.history(conversationId, 50),
-            Conversations.members(conversationId).catch(() => ({
-              members: [],
-            })),
-            Conversations.list(),
-          ]);
+        const [{ messages: history }, { members: ms }, { conversations }] = await Promise.all([
+          Conversations.history(conversationId, 50),
+          Conversations.members(conversationId).catch(() => ({
+            members: [],
+          })),
+          Conversations.list(),
+        ]);
         if (cancelled) return;
         const sorted = [...history].sort(
           (a, b) =>
@@ -98,8 +98,7 @@ function ConversationView() {
         );
         setMessages(sorted);
         setMembers(ms);
-        const found =
-          conversations.find((c) => c.id === conversationId) ?? null;
+        const found = conversations.find((c) => c.id === conversationId) ?? null;
         setConversation(found);
       } catch (err) {
         toast.error("Couldn't load this conversation");
@@ -159,9 +158,7 @@ function ConversationView() {
                     messageId: evt.messageId,
                     userId: evt.userId,
                     deliveredAt: evt.deliveredAt,
-                    readAt:
-                      m.receipts?.find((r) => r.userId === evt.userId)
-                        ?.readAt ?? null,
+                    readAt: m.receipts?.find((r) => r.userId === evt.userId)?.readAt ?? null,
                   },
                 ],
               }
@@ -175,9 +172,7 @@ function ConversationView() {
       setMessages((prev) =>
         prev.map((m) => {
           if (!evt.messageIds.includes(m.id)) return m;
-          const next = (m.receipts ?? []).filter(
-            (r) => r.userId !== evt.userId,
-          );
+          const next = (m.receipts ?? []).filter((r) => r.userId !== evt.userId);
           return {
             ...m,
             receipts: [
@@ -187,8 +182,7 @@ function ConversationView() {
                 messageId: m.id,
                 userId: evt.userId,
                 deliveredAt:
-                  m.receipts?.find((r) => r.userId === evt.userId)
-                    ?.deliveredAt ?? evt.readAt,
+                  m.receipts?.find((r) => r.userId === evt.userId)?.deliveredAt ?? evt.readAt,
                 readAt: evt.readAt,
               },
             ],
@@ -200,9 +194,7 @@ function ConversationView() {
     const onMessageDeleted = (evt: WsMessageDeleted) => {
       if (evt.room !== conversationId) return;
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === evt.messageId ? { ...m, deletedAt: evt.deletedAt } : m,
-        ),
+        prev.map((m) => (m.id === evt.messageId ? { ...m, deletedAt: evt.deletedAt } : m)),
       );
     };
 
@@ -272,9 +264,7 @@ function ConversationView() {
     // Don't mark messages as read while the tab is in the background.
     // This keeps "Seen" meaningful and allows web push / notifications to matter.
     if (typeof document !== "undefined" && document.hidden) return;
-    const lastIncoming = [...messages]
-      .reverse()
-      .find((m) => m.senderId !== user.id);
+    const lastIncoming = [...messages].reverse().find((m) => m.senderId !== user.id);
     if (!lastIncoming) return;
     if (lastReadSentRef.current === lastIncoming.id) return;
     lastReadSentRef.current = lastIncoming.id;
@@ -295,9 +285,7 @@ function ConversationView() {
   const subtitle = useMemo(() => {
     if (!conversation) return "";
     if (conversation.type === "group") {
-      const onlineCount = members.filter((m) =>
-        onlineUserIds.has(m.userId),
-      ).length;
+      const onlineCount = members.filter((m) => onlineUserIds.has(m.userId)).length;
       return onlineCount > 0
         ? `${onlineCount} of ${members.length} online`
         : `${members.length} member${members.length === 1 ? "" : "s"}`;
@@ -443,9 +431,17 @@ function ConversationView() {
             <button
               aria-label="Voice call"
               className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={conversation?.type !== "dm" || callState !== "idle"}
+              disabled={
+                callState !== "idle" ||
+                !(conversation?.type === "dm" || conversation?.type === "group")
+              }
               onClick={() => {
-                if (conversation?.type !== "dm" || !user) return;
+                if (!conversation) return;
+                if (conversation.type === "group") {
+                  startGroupCall(conversationId);
+                  return;
+                }
+                if (conversation.type !== "dm" || !user) return;
                 const peer = members.find((m) => m.userId !== user.id);
                 if (peer) {
                   const name = peer.user?.displayName ?? peer.user?.email ?? undefined;
@@ -453,7 +449,15 @@ function ConversationView() {
                 }
               }}
             >
-              <svg viewBox="0 0 24 24" className="size-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                viewBox="0 0 24 24"
+                className="size-4.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
               </svg>
             </button>
@@ -483,8 +487,19 @@ function ConversationView() {
                 <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
               </svg>
             </button>
-            <button aria-label="More options" className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground">
-              <svg viewBox="0 0 24 24" className="size-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <button
+              aria-label="More options"
+              className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-4.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <circle cx="12" cy="12" r="1" />
                 <circle cx="19" cy="12" r="1" />
                 <circle cx="5" cy="12" r="1" />

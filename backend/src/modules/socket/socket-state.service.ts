@@ -42,6 +42,10 @@ export class SocketStateService {
     this.server = server;
   }
 
+  getServer(): Server {
+    return this.server;
+  }
+
   /**
    * Disconnect all active sockets for a given user.
    * Safe to call even if the user is offline.
