@@ -17,6 +17,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { UploadModule } from './modules/upload/upload.module';
 import { AiModule } from './modules/ai/ai.module';
 import { CallModule } from './modules/call/call.module';
+import { GroupCallModule } from './modules/group-call/group-call.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { CallModule } from './modules/call/call.module';
     UserModule,
     AiModule,
     CallModule,
+    GroupCallModule,
   ],
   controllers: [AppController],
   providers: [AppService],

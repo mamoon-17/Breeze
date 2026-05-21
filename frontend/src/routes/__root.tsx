@@ -11,6 +11,9 @@ import { AuthProvider } from "@/lib/breeze/auth-context";
 import { CallProvider } from "@/lib/breeze/call-context";
 import { CallOverlay } from "@/components/call/CallOverlay";
 import { CallFloater } from "@/components/call/CallFloater";
+import { GroupCallProvider } from "../contexts/GroupCallContext";
+import GroupCallOverlay from "../components/group-call/GroupCallOverlay";
+import IncomingGroupCallBanner from "../components/group-call/IncomingGroupCallBanner";
 import { Toaster } from "@/components/ui/sonner";
 
 function NotFoundComponent() {
@@ -85,11 +88,15 @@ function RootShell({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   return (
     <AuthProvider>
-      <CallProvider>
-        <Outlet />
-        <CallOverlay />
-        <CallFloater />
-      </CallProvider>
+      <GroupCallProvider>
+        <CallProvider>
+          <Outlet />
+          <CallOverlay />
+          <CallFloater />
+          <GroupCallOverlay />
+          <IncomingGroupCallBanner />
+        </CallProvider>
+      </GroupCallProvider>
       <Toaster />
     </AuthProvider>
   );

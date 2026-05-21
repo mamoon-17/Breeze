@@ -21,6 +21,7 @@ import {
 } from "@/lib/breeze/socket";
 import { useAuth } from "@/lib/breeze/auth-context";
 import { useCall } from "@/lib/breeze/call-context";
+import { useGroupCall } from "@/contexts/GroupCallContext";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { ChatComposer } from "@/components/chat/ChatComposer";
 import { AssistPanel } from "@/components/chat/AssistPanel";
@@ -36,6 +37,7 @@ function ConversationView() {
   });
   const { user } = useAuth();
   const { initiateCall, callState } = useCall();
+  const { startGroupCall } = useGroupCall();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerDraft, setComposerDraft] = useState("");
   const [members, setMembers] = useState<
@@ -443,9 +445,17 @@ function ConversationView() {
             <button
               aria-label="Voice call"
               className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={conversation?.type !== "dm" || callState !== "idle"}
+              disabled={
+                callState !== "idle" ||
+                !(conversation?.type === "dm" || conversation?.type === "group")
+              }
               onClick={() => {
-                if (conversation?.type !== "dm" || !user) return;
+                if (!conversation) return;
+                if (conversation.type === "group") {
+                  startGroupCall(conversationId);
+                  return;
+                }
+                if (conversation.type !== "dm" || !user) return;
                 const peer = members.find((m) => m.userId !== user.id);
                 if (peer) {
                   const name = peer.user?.displayName ?? peer.user?.email ?? undefined;
