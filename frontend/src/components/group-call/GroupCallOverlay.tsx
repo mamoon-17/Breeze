@@ -160,13 +160,7 @@ function ParticipantTile({
 }
 
 export default function GroupCallOverlay() {
-  const {
-    groupCallState,
-    participants,
-    isMuted,
-    toggleMute,
-    leaveGroupCall,
-  } = useGroupCall();
+  const { groupCallState, participants, isMuted, toggleMute, leaveGroupCall } = useGroupCall();
 
   if (groupCallState !== "active") return null;
 
@@ -250,9 +244,7 @@ export default function GroupCallOverlay() {
       >
         {isSolo ? (
           <div style={{ width: "min(520px, 92vw)", height: "min(520px, 70vh)" }}>
-            {participants[0] && (
-              <ParticipantTile participant={participants[0]} isSolo />
-            )}
+            {participants[0] && <ParticipantTile participant={participants[0]} isSolo />}
           </div>
         ) : (
           <div
@@ -266,11 +258,7 @@ export default function GroupCallOverlay() {
             }}
           >
             {participants.map((participant) => (
-              <ParticipantTile
-                key={participant.userId}
-                participant={participant}
-                isSolo={false}
-              />
+              <ParticipantTile key={participant.userId} participant={participant} isSolo={false} />
             ))}
           </div>
         )}

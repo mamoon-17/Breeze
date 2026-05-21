@@ -89,8 +89,7 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
   const [callId, setCallId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<GroupCallParticipant[]>([]);
-  const [incomingGroupCall, setIncomingGroupCall] =
-    useState<IncomingGroupCall | null>(null);
+  const [incomingGroupCall, setIncomingGroupCall] = useState<IncomingGroupCall | null>(null);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const pendingStartRef = useRef(false);
@@ -140,17 +139,13 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
     groupCallManager.onParticipantStream = (userId, stream) => {
       setParticipants((prev) =>
         prev.map((participant) =>
-          participant.userId === userId
-            ? { ...participant, stream }
-            : participant,
+          participant.userId === userId ? { ...participant, stream } : participant,
         ),
       );
     };
 
     groupCallManager.onParticipantLeft = (userId) => {
-      setParticipants((prev) =>
-        prev.filter((participant) => participant.userId !== userId),
-      );
+      setParticipants((prev) => prev.filter((participant) => participant.userId !== userId));
     };
 
     return () => {
@@ -163,8 +158,7 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
     const socket = getSocket();
 
     const onInitiated = async (evt: GroupCallInitiatedEvent) => {
-      const isSelfStart =
-        groupCallState === "joining" || pendingStartRef.current;
+      const isSelfStart = groupCallState === "joining" || pendingStartRef.current;
 
       if (isSelfStart) {
         pendingStartRef.current = false;
@@ -206,9 +200,7 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
 
     const onParticipantLeft = (evt: GroupCallParticipantLeftEvent) => {
       groupCallManager.removeParticipant(evt.userId);
-      setParticipants((prev) =>
-        prev.filter((participant) => participant.userId !== evt.userId),
-      );
+      setParticipants((prev) => prev.filter((participant) => participant.userId !== evt.userId));
     };
 
     const onEnded = () => {
@@ -287,9 +279,5 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
     toggleMute,
   };
 
-  return (
-    <GroupCallContext.Provider value={value}>
-      {children}
-    </GroupCallContext.Provider>
-  );
+  return <GroupCallContext.Provider value={value}>{children}</GroupCallContext.Provider>;
 }

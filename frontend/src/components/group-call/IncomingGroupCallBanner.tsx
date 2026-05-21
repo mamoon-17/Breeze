@@ -2,12 +2,7 @@ import { useEffect } from "react";
 import { useGroupCall } from "@/contexts/GroupCallContext";
 
 export default function IncomingGroupCallBanner() {
-  const {
-    groupCallState,
-    incomingGroupCall,
-    joinGroupCall,
-    declineGroupCall,
-  } = useGroupCall();
+  const { groupCallState, incomingGroupCall, joinGroupCall, declineGroupCall } = useGroupCall();
 
   useEffect(() => {
     if (groupCallState !== "incoming" || !incomingGroupCall) return;

@@ -1,13 +1,12 @@
-import type { Socket } from 'socket.io-client';
-import { Calls } from './api';
+import type { Socket } from "socket.io-client";
+import { Calls } from "./api";
 
 class GroupCallManager {
   private pcs: Map<string, RTCPeerConnection> = new Map();
   private localStream: MediaStream | null = null;
   private iceServers: RTCIceServer[] = [];
   callId: string | null = null;
-  onParticipantStream: ((userId: string, stream: MediaStream) => void) | null =
-    null;
+  onParticipantStream: ((userId: string, stream: MediaStream) => void) | null = null;
   onParticipantLeft: ((userId: string) => void) | null = null;
 
   async fetchAndCacheIceServers(): Promise<void> {
@@ -35,10 +34,7 @@ class GroupCallManager {
     return this.localStream;
   }
 
-  private createPeerConnection(
-    userId: string,
-    socket: Socket,
-  ): RTCPeerConnection {
+  private createPeerConnection(userId: string, socket: Socket): RTCPeerConnection {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers });
     this.localStream
       ?.getTracks()
@@ -46,7 +42,7 @@ class GroupCallManager {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && this.callId) {
-        socket.emit('group-call:ice', {
+        socket.emit("group-call:ice", {
           callId: this.callId,
           targetUserId: userId,
           candidate: event.candidate.toJSON(),
@@ -68,24 +64,20 @@ class GroupCallManager {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    socket.emit('group-call:offer', {
+    socket.emit("group-call:offer", {
       callId: this.callId,
       targetUserId: userId,
       sdp: JSON.stringify(pc.localDescription),
     });
   }
 
-  async handleOffer(
-    fromUserId: string,
-    sdp: string,
-    socket: Socket,
-  ): Promise<void> {
+  async handleOffer(fromUserId: string, sdp: string, socket: Socket): Promise<void> {
     const pc = this.createPeerConnection(fromUserId, socket);
     await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    socket.emit('group-call:answer', {
+    socket.emit("group-call:answer", {
       callId: this.callId,
       targetUserId: fromUserId,
       sdp: JSON.stringify(pc.localDescription),
@@ -99,10 +91,7 @@ class GroupCallManager {
     }
   }
 
-  async addIceCandidate(
-    fromUserId: string,
-    candidate: RTCIceCandidateInit,
-  ): Promise<void> {
+  async addIceCandidate(fromUserId: string, candidate: RTCIceCandidateInit): Promise<void> {
     const pc = this.pcs.get(fromUserId);
     if (pc?.remoteDescription) {
       await pc.addIceCandidate(new RTCIceCandidate(candidate));

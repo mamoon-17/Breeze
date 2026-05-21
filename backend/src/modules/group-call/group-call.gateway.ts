@@ -18,10 +18,7 @@ import {
   GroupCallClientEvents,
   GroupCallServerEvents,
 } from './group-call.events';
-import {
-  GroupCallParticipant,
-  GroupCallSession,
-} from './group-call-session';
+import { GroupCallParticipant, GroupCallSession } from './group-call-session';
 import { GroupCallSessionMap } from './group-call-session.map';
 import type { AuthenticatedSocket } from '../../common/types/authenticated-socket';
 
@@ -210,19 +207,15 @@ export class GroupCallGateway implements OnGatewayInit, OnGatewayDisconnect {
       );
     }
 
-    this.socketState.emitToSocket(
-      client.id,
-      GroupCallServerEvents.INITIATED,
-      {
-        callId: session.callId,
-        conversationId: session.conversationId,
-        participants: session.participants.map((participant) => ({
-          userId: participant.userId,
-          socketId: participant.socketId,
-          userName: participant.userName,
-        })),
-      },
-    );
+    this.socketState.emitToSocket(client.id, GroupCallServerEvents.INITIATED, {
+      callId: session.callId,
+      conversationId: session.conversationId,
+      participants: session.participants.map((participant) => ({
+        userId: participant.userId,
+        socketId: participant.socketId,
+        userName: participant.userName,
+      })),
+    });
   }
 
   @SubscribeMessage(GroupCallClientEvents.LEAVE)
@@ -318,7 +311,10 @@ export class GroupCallGateway implements OnGatewayInit, OnGatewayDisconnect {
     });
   }
 
-  private async removeParticipant(callId: string, userId: string): Promise<void> {
+  private async removeParticipant(
+    callId: string,
+    userId: string,
+  ): Promise<void> {
     const session = this.groupCallSessionMap.get(callId);
     if (!session) return;
 
@@ -331,7 +327,11 @@ export class GroupCallGateway implements OnGatewayInit, OnGatewayDisconnect {
 
     if (session.participants.length === 0) {
       this.groupCallSessionMap.delete(callId);
-      await this.emitToConversationMembers(session.conversationId, { callId }, true);
+      await this.emitToConversationMembers(
+        session.conversationId,
+        { callId },
+        true,
+      );
       return;
     }
 
@@ -359,9 +359,8 @@ export class GroupCallGateway implements OnGatewayInit, OnGatewayDisconnect {
     },
     ended = false,
   ): Promise<void> {
-    const memberIds = await this.conversationService.getMemberUserIds(
-      conversationId,
-    );
+    const memberIds =
+      await this.conversationService.getMemberUserIds(conversationId);
     const event = ended
       ? GroupCallServerEvents.ENDED
       : GroupCallServerEvents.INITIATED;

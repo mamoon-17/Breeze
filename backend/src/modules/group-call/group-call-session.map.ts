@@ -19,7 +19,10 @@ export class GroupCallSessionMap {
 
   getByConversationId(conversationId: string): GroupCallSession | undefined {
     for (const session of this.sessions.values()) {
-      if (session.conversationId === conversationId && session.state !== 'ended') {
+      if (
+        session.conversationId === conversationId &&
+        session.state !== 'ended'
+      ) {
         return session;
       }
     }
