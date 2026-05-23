@@ -2,15 +2,19 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import EmojiPicker, { type EmojiClickData } from "emoji-picker-react";
+import { X } from "lucide-react";
 import { emitTyping, emitStopTyping } from "@/lib/breeze/socket";
+import type { ReplyToPayload } from "@/lib/breeze/types";
 
 interface Props {
-  onSend: (text: string) => void;
+  onSend: (text: string, replyTo?: ReplyToPayload) => void;
   onSendAudio?: (blob: Blob) => void;
   onSendAttachments?: (files: File[]) => void;
   uploadingAttachments?: boolean;
   conversationId?: string;
   disabled?: boolean;
+  replyingTo?: ReplyToPayload | null;
+  onCancelReply?: () => void;
   /** When provided, the composer uses this external value instead of local state */
   externalValue?: string;
   /** Called when the composer text changes (used with externalValue) */
@@ -26,6 +30,8 @@ export function ChatComposer({
   uploadingAttachments,
   conversationId,
   disabled,
+  replyingTo,
+  onCancelReply,
   externalValue,
   onExternalChange,
 }: Props) {
@@ -149,7 +155,8 @@ export function ChatComposer({
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
     stopTyping();
-    onSend(trimmed);
+    onSend(trimmed, replyingTo ?? undefined);
+    onCancelReply?.();
     setValueFn("");
   };
 
@@ -252,6 +259,27 @@ export function ChatComposer({
           style={{ left: pickerLeft ?? 0 }}
         >
           <EmojiPicker onEmojiClick={handleEmojiSelect} />
+        </div>
+      )}
+      {replyingTo && (
+        <div className="mb-2 ml-2 flex items-center gap-3 rounded-xl border border-linen-200 bg-card px-3 py-2 shadow-soft">
+          <div className="min-w-0 flex-1 border-l-2 border-[var(--accent-bubble-bg)] pl-3">
+            <div className="text-[11px] font-medium text-muted-foreground">
+              Replying to {replyingTo.senderName}
+            </div>
+            <div className="truncate text-xs text-foreground">
+              {truncateText(replyingTo.text || attachmentLabel(replyingTo.attachmentType), 60)}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onCancelReply}
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-linen-100 hover:text-foreground"
+            aria-label="Cancel reply"
+            title="Cancel reply"
+          >
+            <X className="size-4" />
+          </button>
         </div>
       )}
       <div className="flex items-end gap-2 rounded-2xl border border-linen-200 bg-card p-2 shadow-soft">
@@ -357,4 +385,17 @@ export function ChatComposer({
       </div>
     </div>
   );
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
+function attachmentLabel(type?: string): string {
+  if (type === "image") return "Photo";
+  if (type === "video") return "Video";
+  if (type === "audio") return "Audio";
+  if (type) return "File";
+  return "";
 }

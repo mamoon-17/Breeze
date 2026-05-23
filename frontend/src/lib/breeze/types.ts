@@ -67,6 +67,14 @@ export interface MessageReceipt {
   readAt: string | null;
 }
 
+export interface ReplyToPayload {
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  attachmentType?: string;
+}
+
 export interface ChatMessage {
   id: string;
   room: string;
@@ -80,6 +88,7 @@ export interface ChatMessage {
   createdAt: string;
   deletedAt?: string | null;
   receipts?: MessageReceipt[];
+  replyTo?: ReplyToPayload | null;
   attachments?: {
     id: string;
     messageId: string;

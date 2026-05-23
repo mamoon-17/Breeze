@@ -12,6 +12,7 @@ import type {
   AuthTokens,
   ChatMessage,
   ConversationInvitation,
+  ReplyToPayload,
   WsConversationCreated,
   WsInvitationUpdated,
   WsMemberAdded,
@@ -205,7 +206,12 @@ export function joinRoom(conversationId: string) {
 
 export function sendMessage(
   room: string,
-  payload: { message?: string; attachmentUrl?: string; attachmentType?: "audio" },
+  payload: {
+    message?: string;
+    attachmentUrl?: string;
+    attachmentType?: "audio";
+    replyTo?: ReplyToPayload;
+  },
 ) {
   getSocket().emit("sendMessage", { room, ...payload });
 }
