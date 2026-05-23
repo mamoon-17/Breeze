@@ -10,24 +10,37 @@ class GroupCallManager {
   onParticipantLeft: ((userId: string) => void) | null = null;
 
   async fetchAndCacheIceServers(): Promise<void> {
-    const response = await Calls.iceServers();
-    this.iceServers = response;
+    try {
+      const response = await Calls.iceServers();
+      console.log("Group call ICE servers response:", response);
+      const servers = (response as { iceServers?: RTCIceServer[] }).iceServers ?? response;
+      this.iceServers = Array.isArray(servers) ? servers : [];
+      console.log("Group call ICE servers cached:", this.iceServers);
+    } catch (err) {
+      console.error("Failed to fetch ICE servers for group call:", err);
+      this.iceServers = [{ urls: "stun:stun.l.google.com:19302" }];
+    }
   }
 
   async initializeMedia(): Promise<MediaStream> {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 48000,
-        channelCount: 1,
-      },
-      video: false,
-    });
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48000,
+          channelCount: 1,
+        },
+        video: false,
+      });
 
-    this.localStream = stream;
-    return stream;
+      this.localStream = stream;
+      return stream;
+    } catch (err) {
+      console.error("Group call getUserMedia failed:", err);
+      throw err;
+    }
   }
 
   getLocalStream(): MediaStream | null {
@@ -35,10 +48,21 @@ class GroupCallManager {
   }
 
   private createPeerConnection(userId: string, socket: Socket): RTCPeerConnection {
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers });
-    this.localStream
-      ?.getTracks()
-      .forEach((track) => pc.addTrack(track, this.localStream as MediaStream));
+    const iceServers =
+      Array.isArray(this.iceServers) && this.iceServers.length > 0
+        ? this.iceServers
+        : [{ urls: "stun:stun.l.google.com:19302" }];
+    const pc = new RTCPeerConnection({ iceServers });
+    const tracks = this.localStream?.getTracks() ?? [];
+    console.log(
+      "GroupCall: adding tracks to PC:",
+      tracks.map((track) => `${track.kind}:${track.enabled}`),
+    );
+    tracks.forEach((track) => {
+      if (this.localStream) {
+        pc.addTrack(track, this.localStream);
+      }
+    });
 
     pc.onicecandidate = (event) => {
       if (event.candidate && this.callId) {
