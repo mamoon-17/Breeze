@@ -123,7 +123,52 @@
   --sidebar-ring: var(--breeze);
 }
 
+html[data-theme="default"] {
+  --accent-bubble-bg: oklch(0.74 0.045 220);
+  --accent-bubble-bg-dark: oklch(0.62 0.08 230);
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="pink"] {
+  --accent-bubble-bg: #f4a7b9;
+  --accent-bubble-bg-dark: #c97a8f;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="rose"] {
+  --accent-bubble-bg: #e05c7a;
+  --accent-bubble-bg-dark: #b84560;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="mint"] {
+  --accent-bubble-bg: #7ec8b0;
+  --accent-bubble-bg-dark: #5a9e88;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="lavender"] {
+  --accent-bubble-bg: #b39ddb;
+  --accent-bubble-bg-dark: #8b72c0;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="amber"] {
+  --accent-bubble-bg: #f6c94e;
+  --accent-bubble-bg-dark: #d4a017;
+  --accent-bubble-text: #3b2a00;
+  --accent-bubble-text-dark: #1f1300;
+}
+
 html.dark {
+  --accent-bubble-bg: var(--accent-bubble-bg-dark);
+  --accent-bubble-text: var(--accent-bubble-text-dark, var(--accent-bubble-text));
+
   --linen-50: #111111;
   --linen-100: #1a1a1a;
   --linen-200: #262626;
@@ -191,9 +236,64 @@ html.dark .glass {
   background-color: color-mix(in oklab, #111111 70%, transparent);
 }
 
+html[data-theme] .bg-breeze {
+  background-color: var(--accent-bubble-bg);
+  color: var(--accent-bubble-text, #ffffff);
+}
+
+html[data-theme] .bg-breeze\/90 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 90%, transparent);
+  color: var(--accent-bubble-text, #ffffff);
+}
+
+html[data-theme] .bg-breeze\/80 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 80%, transparent);
+  color: var(--accent-bubble-text, #ffffff);
+}
+
+html[data-theme] .hover\:bg-breeze\/80:hover {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 80%, transparent);
+}
+
+html[data-theme] .bg-breeze\/20 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 20%, transparent);
+}
+
+html[data-theme] .bg-breeze\/10 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 10%, transparent);
+}
+
+html[data-theme] .from-breeze\/20 {
+  --tw-gradient-from: color-mix(in oklab, var(--accent-bubble-bg) 20%, transparent);
+  --tw-gradient-to: color-mix(in oklab, var(--accent-bubble-bg) 0%, transparent);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html[data-theme] .hover\:from-breeze\/30:hover {
+  --tw-gradient-from: color-mix(in oklab, var(--accent-bubble-bg) 30%, transparent);
+  --tw-gradient-to: color-mix(in oklab, var(--accent-bubble-bg) 0%, transparent);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html[data-theme] .text-breeze {
+  color: var(--accent-bubble-bg);
+}
+
+html[data-theme] .border-breeze {
+  border-color: var(--accent-bubble-bg);
+}
+
+html[data-theme] .focus\:border-breeze:focus {
+  border-color: var(--accent-bubble-bg);
+}
+
+html[data-theme] .ring-breeze\/40 {
+  --tw-ring-color: color-mix(in oklab, var(--accent-bubble-bg) 40%, transparent);
+}
+
 html.dark .bg-breeze\/90 {
-  background-color: var(--breeze);
-  color: #f8fafc;
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 90%, transparent);
+  color: var(--accent-bubble-text, #f8fafc);
 }
 
 html.dark .bg-linen-200\/80 {
@@ -225,6 +325,37 @@ html.dark .to-indigo-50 {
 
 html.dark .border-violet-200\/60 {
   border-color: rgba(42, 42, 42, 0.9);
+}
+
+.theme-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background-color: var(--accent-bubble-bg);
+}
+
+.theme-swatch-default {
+  background-color: oklch(0.74 0.045 220);
+}
+
+.theme-swatch-pink {
+  background-color: #f4a7b9;
+}
+
+.theme-swatch-rose {
+  background-color: #e05c7a;
+}
+
+.theme-swatch-mint {
+  background-color: #7ec8b0;
+}
+
+.theme-swatch-lavender {
+  background-color: #b39ddb;
+}
+
+.theme-swatch-amber {
+  background-color: #f6c94e;
 }
 
 @layer base {

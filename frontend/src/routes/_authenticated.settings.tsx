@@ -8,6 +8,8 @@ export const Route = createFileRoute("/_authenticated/settings")({
   component: SettingsPage,
 });
 
+type AccentTheme = "default" | "pink" | "rose" | "mint" | "lavender" | "amber";
+
 function SettingsPage() {
   const navigate = useNavigate();
   const { user, refreshUser, signOut } = useAuth();
@@ -17,6 +19,11 @@ function SettingsPage() {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return localStorage.getItem("breeze-theme") === "dark" ? "dark" : "light";
+  });
+  const [accentTheme, setAccentTheme] = useState<AccentTheme>(() => {
+    if (typeof window === "undefined") return "default";
+    const stored = localStorage.getItem("breeze-accent-theme");
+    return (stored as AccentTheme) || "default";
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -32,6 +39,13 @@ function SettingsPage() {
     if (typeof window === "undefined") return;
     localStorage.setItem("breeze-theme", nextTheme);
     document.documentElement.classList.toggle("dark", nextTheme === "dark");
+  }, []);
+
+  const applyAccentTheme = useCallback((nextTheme: AccentTheme) => {
+    setAccentTheme(nextTheme);
+    if (typeof window === "undefined") return;
+    localStorage.setItem("breeze-accent-theme", nextTheme);
+    document.documentElement.setAttribute("data-theme", nextTheme);
   }, []);
 
   useEffect(() => {
@@ -301,6 +315,57 @@ function SettingsPage() {
                 </button>
               </div>
             </div>
+          </section>
+
+          <section className="mt-6 rounded-2xl border border-linen-200 bg-card p-6 shadow-soft">
+            <h2 className="text-sm font-semibold text-foreground">Themes</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Pick an accent color for your sent messages.
+            </p>
+
+            <div className="mt-4 flex flex-wrap gap-4">
+              {(
+                [
+                  { key: "default", label: "Default" },
+                  { key: "pink", label: "Pink" },
+                  { key: "rose", label: "Rose" },
+                  { key: "mint", label: "Mint" },
+                  { key: "lavender", label: "Lavender" },
+                  { key: "amber", label: "Amber" },
+                ] as Array<{ key: AccentTheme; label: string }>
+              ).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => applyAccentTheme(option.key)}
+                  className="flex flex-col items-center gap-2"
+                >
+                  <span
+                    className={[
+                      "theme-swatch",
+                      `theme-swatch-${option.key}`,
+                      "transition",
+                      accentTheme === option.key
+                        ? "ring-2 ring-foreground/30"
+                        : "ring-1 ring-transparent",
+                    ].join(" ")}
+                  />
+                  <span className="text-[11px] text-muted-foreground">
+                    {option.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {accentTheme !== "default" && (
+              <button
+                type="button"
+                onClick={() => applyAccentTheme("default")}
+                className="mt-4 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
+              >
+                Reset to default
+              </button>
+            )}
           </section>
 
           <div className="mt-6 flex justify-end">

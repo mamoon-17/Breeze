@@ -13,6 +13,8 @@ import { Toaster } from "@/components/ui/sonner";
 const themeInitScript = `(() => {
   try {
     const theme = localStorage.getItem("breeze-theme") || "light";
+    const accentTheme = localStorage.getItem("breeze-accent-theme") || "default";
+    document.documentElement.setAttribute("data-theme", accentTheme);
     document.documentElement.classList.toggle("dark", theme === "dark");
   } catch {
     // ignore
