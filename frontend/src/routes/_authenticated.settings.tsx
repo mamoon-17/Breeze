@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Profile, resolveAvatarUrl } from "@/lib/breeze/api";
 import { useAuth } from "@/lib/breeze/auth-context";
@@ -14,6 +14,10 @@ function SettingsPage() {
 
   const [customName, setCustomName] = useState("");
   const [useGoogleAvatar, setUseGoogleAvatar] = useState(true);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    return localStorage.getItem("breeze-theme") === "dark" ? "dark" : "light";
+  });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -23,14 +27,19 @@ function SettingsPage() {
   // actually changes).
   const [avatarBust, setAvatarBust] = useState(0);
 
+  const applyTheme = useCallback((nextTheme: "light" | "dark") => {
+    setTheme(nextTheme);
+    if (typeof window === "undefined") return;
+    localStorage.setItem("breeze-theme", nextTheme);
+    document.documentElement.classList.toggle("dark", nextTheme === "dark");
+  }, []);
+
   useEffect(() => {
     // Seed the form once the user record arrives. We show the Google name as
     // the placeholder so an empty input visibly means "fall back to Google".
     if (!user) return;
     const custom =
-      user.displayName && user.displayName !== user.googleDisplayName
-        ? user.displayName
-        : "";
+      user.displayName && user.displayName !== user.googleDisplayName ? user.displayName : "";
     setCustomName(custom);
     setUseGoogleAvatar(user.useGoogleAvatar ?? true);
   }, [user?.id, user?.displayName, user?.googleDisplayName, user?.useGoogleAvatar, user]);
@@ -146,8 +155,8 @@ function SettingsPage() {
           </p>
           <h1 className="mt-1 font-display text-4xl">Profile</h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-            Choose how you appear to other people on Breeze — your display name
-            and your profile picture.
+            Choose how you appear to other people on Breeze — your display name and your profile
+            picture.
           </p>
 
           {/* Avatar card */}
@@ -215,9 +224,7 @@ function SettingsPage() {
                 disabled={!user?.hasCustomAvatar}
               />
               <div className="text-xs">
-                <div className="font-medium text-foreground">
-                  Use my Google account picture
-                </div>
+                <div className="font-medium text-foreground">Use my Google account picture</div>
                 <div className="mt-0.5 text-muted-foreground">
                   {user?.hasCustomAvatar
                     ? "Switch between your uploaded picture and your Google photo without losing the upload."
@@ -231,8 +238,7 @@ function SettingsPage() {
           <section className="mt-6 rounded-2xl border border-linen-200 bg-card p-6 shadow-soft">
             <h2 className="text-sm font-semibold text-foreground">Display name</h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Shown to everyone you chat with. Leave blank to use the name on
-              your Google account
+              Shown to everyone you chat with. Leave blank to use the name on your Google account
               {googleDefault ? (
                 <>
                   {" "}
@@ -251,9 +257,50 @@ function SettingsPage() {
               className="mt-4 w-full rounded-xl border border-linen-200 bg-linen-50 px-4 py-2.5 text-sm text-foreground outline-none transition focus:border-primary focus:bg-white"
             />
             <p className="mt-2 text-[11px] text-muted-foreground">
-              Preview:{" "}
-              <span className="font-medium text-foreground">{effectiveName || "—"}</span>
+              Preview: <span className="font-medium text-foreground">{effectiveName || "—"}</span>
             </p>
+          </section>
+
+          <section className="mt-6 rounded-2xl border border-linen-200 bg-card p-6 shadow-soft">
+            <h2 className="text-sm font-semibold text-foreground">Chat Settings</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Personalize how Breeze looks in your conversations.
+            </p>
+
+            <div className="mt-4 flex flex-col gap-4 rounded-xl border border-linen-200 bg-linen-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-foreground">Theme</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Choose your preferred appearance
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => applyTheme("light")}
+                  className={[
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                    theme === "light"
+                      ? "border-transparent bg-foreground text-background"
+                      : "border-linen-200 bg-card text-muted-foreground hover:bg-linen-100 hover:text-foreground",
+                  ].join(" ")}
+                >
+                  Light
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyTheme("dark")}
+                  className={[
+                    "rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                    theme === "dark"
+                      ? "border-transparent bg-foreground text-background"
+                      : "border-linen-200 bg-card text-muted-foreground hover:bg-linen-100 hover:text-foreground",
+                  ].join(" ")}
+                >
+                  Dark
+                </button>
+              </div>
+            </div>
           </section>
 
           <div className="mt-6 flex justify-end">

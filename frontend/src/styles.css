@@ -123,6 +123,110 @@
   --sidebar-ring: var(--breeze);
 }
 
+html.dark {
+  --linen-50: #111111;
+  --linen-100: #1a1a1a;
+  --linen-200: #262626;
+  --linen-600: #a3a3a3;
+  --linen-900: #f2f2f2;
+
+  --breeze: oklch(0.62 0.08 230);
+  --breeze-soft: oklch(0.25 0.05 230);
+
+  --background: #111111;
+  --foreground: #f2f2f2;
+
+  --card: #1a1a1a;
+  --card-foreground: #f2f2f2;
+
+  --popover: #1a1a1a;
+  --popover-foreground: #f2f2f2;
+
+  --primary: #f2f2f2;
+  --primary-foreground: #0f0f0f;
+
+  --secondary: #1f1f1f;
+  --secondary-foreground: #f2f2f2;
+
+  --muted: #1b1b1b;
+  --muted-foreground: #a3a3a3;
+
+  --accent: var(--breeze);
+  --accent-foreground: #f8fafc;
+
+  --destructive: oklch(0.6 0.18 25);
+  --destructive-foreground: #f8fafc;
+
+  --border: #2a2a2a;
+  --input: #2a2a2a;
+  --ring: var(--breeze);
+
+  --sidebar: #1a1a1a;
+  --sidebar-foreground: #f2f2f2;
+  --sidebar-primary: #f2f2f2;
+  --sidebar-primary-foreground: #0f0f0f;
+  --sidebar-accent: #232323;
+  --sidebar-accent-foreground: #f2f2f2;
+  --sidebar-border: #2a2a2a;
+  --sidebar-ring: var(--breeze);
+}
+
+html.dark .bg-white\/60 {
+  background-color: rgba(15, 15, 15, 0.8);
+}
+
+html.dark .bg-white\/80 {
+  background-color: rgba(15, 15, 15, 0.9);
+}
+
+html.dark .bg-white\/40 {
+  background-color: rgba(15, 15, 15, 0.65);
+}
+
+html.dark .bg-white {
+  background-color: #111111;
+}
+
+html.dark .glass {
+  background-color: color-mix(in oklab, #111111 70%, transparent);
+}
+
+html.dark .bg-breeze\/90 {
+  background-color: var(--breeze);
+  color: #f8fafc;
+}
+
+html.dark .bg-linen-200\/80 {
+  background-color: #1a1a1a;
+  color: #f2f2f2;
+}
+
+html.dark .bg-red-50 {
+  background-color: rgba(127, 29, 29, 0.2);
+}
+
+html.dark .hover\:bg-red-50:hover {
+  background-color: rgba(127, 29, 29, 0.2);
+}
+
+html.dark .text-red-600 {
+  color: #f87171;
+}
+
+html.dark .from-violet-50 {
+  --tw-gradient-from: #1a1a1a;
+  --tw-gradient-to: rgba(26, 26, 26, 0);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html.dark .to-indigo-50 {
+  --tw-gradient-to: #1a1a1a;
+}
+
+html.dark .border-violet-200\/60 {
+  border-color: rgba(42, 42, 42, 0.9);
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

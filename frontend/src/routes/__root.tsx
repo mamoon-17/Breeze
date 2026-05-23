@@ -10,6 +10,15 @@ import GroupCallOverlay from "../components/group-call/GroupCallOverlay";
 import IncomingGroupCallBanner from "../components/group-call/IncomingGroupCallBanner";
 import { Toaster } from "@/components/ui/sonner";
 
+const themeInitScript = `(() => {
+  try {
+    const theme = localStorage.getItem("breeze-theme") || "light";
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  } catch {
+    // ignore
+  }
+})();`;
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -68,6 +77,7 @@ function RootShell({ children }: { children: React.ReactNode }) {
     <html lang="en">
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body>
         {children}
