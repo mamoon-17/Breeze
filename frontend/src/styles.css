@@ -123,6 +123,241 @@
   --sidebar-ring: var(--breeze);
 }
 
+html[data-theme="default"] {
+  --accent-bubble-bg: oklch(0.74 0.045 220);
+  --accent-bubble-bg-dark: oklch(0.62 0.08 230);
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="pink"] {
+  --accent-bubble-bg: #f4a7b9;
+  --accent-bubble-bg-dark: #c97a8f;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="rose"] {
+  --accent-bubble-bg: #e05c7a;
+  --accent-bubble-bg-dark: #b84560;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="mint"] {
+  --accent-bubble-bg: #7ec8b0;
+  --accent-bubble-bg-dark: #5a9e88;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="lavender"] {
+  --accent-bubble-bg: #b39ddb;
+  --accent-bubble-bg-dark: #8b72c0;
+  --accent-bubble-text: #ffffff;
+  --accent-bubble-text-dark: #f8fafc;
+}
+
+html[data-theme="amber"] {
+  --accent-bubble-bg: #f6c94e;
+  --accent-bubble-bg-dark: #d4a017;
+  --accent-bubble-text: #3b2a00;
+  --accent-bubble-text-dark: #1f1300;
+}
+
+html.dark {
+  --accent-bubble-bg: var(--accent-bubble-bg-dark);
+  --accent-bubble-text: var(--accent-bubble-text-dark, var(--accent-bubble-text));
+
+  --linen-50: #111111;
+  --linen-100: #1a1a1a;
+  --linen-200: #262626;
+  --linen-600: #a3a3a3;
+  --linen-900: #f2f2f2;
+
+  --breeze: oklch(0.62 0.08 230);
+  --breeze-soft: oklch(0.25 0.05 230);
+
+  --background: #111111;
+  --foreground: #f2f2f2;
+
+  --card: #1a1a1a;
+  --card-foreground: #f2f2f2;
+
+  --popover: #1a1a1a;
+  --popover-foreground: #f2f2f2;
+
+  --primary: #f2f2f2;
+  --primary-foreground: #0f0f0f;
+
+  --secondary: #1f1f1f;
+  --secondary-foreground: #f2f2f2;
+
+  --muted: #1b1b1b;
+  --muted-foreground: #a3a3a3;
+
+  --accent: var(--breeze);
+  --accent-foreground: #f8fafc;
+
+  --destructive: oklch(0.6 0.18 25);
+  --destructive-foreground: #f8fafc;
+
+  --border: #2a2a2a;
+  --input: #2a2a2a;
+  --ring: var(--breeze);
+
+  --sidebar: #1a1a1a;
+  --sidebar-foreground: #f2f2f2;
+  --sidebar-primary: #f2f2f2;
+  --sidebar-primary-foreground: #0f0f0f;
+  --sidebar-accent: #232323;
+  --sidebar-accent-foreground: #f2f2f2;
+  --sidebar-border: #2a2a2a;
+  --sidebar-ring: var(--breeze);
+}
+
+html.dark .bg-white\/60 {
+  background-color: rgba(15, 15, 15, 0.8);
+}
+
+html.dark .bg-white\/80 {
+  background-color: rgba(15, 15, 15, 0.9);
+}
+
+html.dark .bg-white\/40 {
+  background-color: rgba(15, 15, 15, 0.65);
+}
+
+html.dark .bg-white {
+  background-color: #111111;
+}
+
+html.dark .glass {
+  background-color: color-mix(in oklab, #111111 70%, transparent);
+}
+
+html[data-theme] .bg-breeze {
+  background-color: var(--accent-bubble-bg);
+  color: var(--accent-bubble-text, #ffffff);
+}
+
+html[data-theme] .bg-breeze\/90 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 90%, transparent);
+  color: var(--accent-bubble-text, #ffffff);
+}
+
+html[data-theme] .bg-breeze\/80 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 80%, transparent);
+  color: var(--accent-bubble-text, #ffffff);
+}
+
+html[data-theme] .hover\:bg-breeze\/80:hover {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 80%, transparent);
+}
+
+html[data-theme] .bg-breeze\/20 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 20%, transparent);
+}
+
+html[data-theme] .bg-breeze\/10 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 10%, transparent);
+}
+
+html[data-theme] .from-breeze\/20 {
+  --tw-gradient-from: color-mix(in oklab, var(--accent-bubble-bg) 20%, transparent);
+  --tw-gradient-to: color-mix(in oklab, var(--accent-bubble-bg) 0%, transparent);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html[data-theme] .hover\:from-breeze\/30:hover {
+  --tw-gradient-from: color-mix(in oklab, var(--accent-bubble-bg) 30%, transparent);
+  --tw-gradient-to: color-mix(in oklab, var(--accent-bubble-bg) 0%, transparent);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html[data-theme] .text-breeze {
+  color: var(--accent-bubble-bg);
+}
+
+html[data-theme] .border-breeze {
+  border-color: var(--accent-bubble-bg);
+}
+
+html[data-theme] .focus\:border-breeze:focus {
+  border-color: var(--accent-bubble-bg);
+}
+
+html[data-theme] .ring-breeze\/40 {
+  --tw-ring-color: color-mix(in oklab, var(--accent-bubble-bg) 40%, transparent);
+}
+
+html.dark .bg-breeze\/90 {
+  background-color: color-mix(in oklab, var(--accent-bubble-bg) 90%, transparent);
+  color: var(--accent-bubble-text, #f8fafc);
+}
+
+html.dark .bg-linen-200\/80 {
+  background-color: #1a1a1a;
+  color: #f2f2f2;
+}
+
+html.dark .bg-red-50 {
+  background-color: rgba(127, 29, 29, 0.2);
+}
+
+html.dark .hover\:bg-red-50:hover {
+  background-color: rgba(127, 29, 29, 0.2);
+}
+
+html.dark .text-red-600 {
+  color: #f87171;
+}
+
+html.dark .from-violet-50 {
+  --tw-gradient-from: #1a1a1a;
+  --tw-gradient-to: rgba(26, 26, 26, 0);
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+html.dark .to-indigo-50 {
+  --tw-gradient-to: #1a1a1a;
+}
+
+html.dark .border-violet-200\/60 {
+  border-color: rgba(42, 42, 42, 0.9);
+}
+
+.theme-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background-color: var(--accent-bubble-bg);
+}
+
+.theme-swatch-default {
+  background-color: oklch(0.74 0.045 220);
+}
+
+.theme-swatch-pink {
+  background-color: #f4a7b9;
+}
+
+.theme-swatch-rose {
+  background-color: #e05c7a;
+}
+
+.theme-swatch-mint {
+  background-color: #7ec8b0;
+}
+
+.theme-swatch-lavender {
+  background-color: #b39ddb;
+}
+
+.theme-swatch-amber {
+  background-color: #f6c94e;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

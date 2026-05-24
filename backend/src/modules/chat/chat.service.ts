@@ -61,6 +61,7 @@ export class ChatService {
         message: dto.message ?? '',
         attachmentUrl: dto.attachmentUrl ?? null,
         attachmentType: dto.attachmentType ?? null,
+        replyTo: dto.replyTo ?? null,
         sentAt: now,
       });
       const message = await manager.save(msg);

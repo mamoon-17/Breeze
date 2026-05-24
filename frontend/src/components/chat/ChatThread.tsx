@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage } from "@/lib/breeze/types";
+import type { ChatMessage, ReplyToPayload } from "@/lib/breeze/types";
 import { format } from "date-fns";
+import {
+  File as FileIcon,
+  Image as ImageIcon,
+  type LucideIcon,
+  Mic as MicIcon,
+  Reply as ReplyIcon,
+  Video as VideoIcon,
+} from "lucide-react";
 import { AttachmentLightbox, type LightboxItem } from "./AttachmentLightbox";
 import { useCall } from "@/lib/breeze/call-context";
 
@@ -21,6 +29,7 @@ interface Props {
   showTyping?: boolean;
   typingName?: string;
   onDelete?: (messageId: string) => void;
+  onReply?: (msg: ReplyToPayload) => void;
 }
 
 export function ChatThread({
@@ -31,6 +40,7 @@ export function ChatThread({
   showTyping,
   typingName,
   onDelete,
+  onReply,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -109,6 +119,7 @@ export function ChatThread({
               ts={ts}
               message={m}
               onDelete={mine && !m.deletedAt ? onDelete : undefined}
+              onReply={onReply}
             />
           );
         })}
@@ -325,6 +336,7 @@ function Bubble({
   ts,
   message,
   onDelete,
+  onReply,
 }: {
   mine: boolean;
   showHeader: boolean;
@@ -332,6 +344,7 @@ function Bubble({
   ts: string;
   message: ChatMessage;
   onDelete?: (messageId: string) => void;
+  onReply?: (msg: ReplyToPayload) => void;
 }) {
   const deleted = Boolean(message.deletedAt);
   const status = mine && !deleted ? deriveStatus(message) : null;
@@ -374,6 +387,26 @@ function Bubble({
         </span>
       )}
       <div className="flex items-center gap-1.5">
+        {onReply && !deleted && (
+          <button
+            type="button"
+            onClick={() =>
+              onReply({
+                messageId: message.id,
+                senderId: message.senderId,
+                senderName: name,
+                text: message.message?.slice(0, 100) ?? "",
+                attachmentType:
+                  message.attachments?.[0]?.type ?? message.attachmentType ?? undefined,
+              })
+            }
+            className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition hover:bg-linen-100 hover:text-foreground group-hover:opacity-100"
+            aria-label="Reply to message"
+            title="Reply"
+          >
+            <ReplyIcon className="size-3.5" />
+          </button>
+        )}
         {mine && onDelete && !deleted && (
           <button
             type="button"
@@ -439,6 +472,7 @@ function Bubble({
                 : "rounded-3xl rounded-tl-md border border-linen-100 bg-card text-foreground",
             ].join(" ")}
           >
+            <ReplyQuoteBlock replyTo={message.replyTo} mine={mine} />
             {Array.isArray(message.attachments) && message.attachments.length > 0 ? (
               <div className="flex flex-col gap-2">
                 <div className="grid max-w-[420px] grid-cols-2 gap-2">
@@ -542,6 +576,62 @@ function Bubble({
       )}
     </div>
   );
+}
+
+function ReplyQuoteBlock({
+  replyTo,
+  mine,
+}: {
+  replyTo?: ReplyToPayload | null;
+  mine: boolean;
+}) {
+  if (!replyTo) return null;
+  const attachment = getAttachmentDisplay(replyTo.attachmentType);
+
+  return (
+    <div
+      className={[
+        "mb-2 rounded-xl border-l-2 border-[var(--accent-bubble-bg)] px-3 py-2",
+        mine ? "bg-white/15" : "bg-linen-100/70",
+      ].join(" ")}
+    >
+      <div className={["text-xs font-semibold", mine ? "text-white" : "text-foreground"].join(" ")}>
+        {replyTo.senderName}
+      </div>
+      {attachment && (
+        <div
+          className={[
+            "mt-1 flex items-center gap-1 text-xs",
+            mine ? "text-white/75" : "text-muted-foreground",
+          ].join(" ")}
+        >
+          <attachment.Icon className="size-3" />
+          <span>{attachment.label}</span>
+        </div>
+      )}
+      {replyTo.text && (
+        <div className={["mt-0.5 text-xs", mine ? "text-white/75" : "text-muted-foreground"].join(" ")}>
+          {truncateText(replyTo.text, 80)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getAttachmentDisplay(type?: string): {
+  label: string;
+  Icon: LucideIcon;
+} | null {
+  if (!type) return null;
+  if (type === "image") return { label: "Photo", Icon: ImageIcon };
+  if (type === "video") return { label: "Video", Icon: VideoIcon };
+  if (type === "audio") return { label: "Audio", Icon: MicIcon };
+  return { label: "File", Icon: FileIcon };
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
 }
 
 function deriveStatus(m: ChatMessage): "Sent" | "Delivered" | "Read" {

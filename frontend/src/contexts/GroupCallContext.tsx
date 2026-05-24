@@ -93,9 +93,11 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const pendingStartRef = useRef(false);
+  const isJoiningRef = useRef(false);
 
   const startGroupCall = useCallback((targetConversationId: string) => {
     const socket = getSocket();
+    isJoiningRef.current = true;
     pendingStartRef.current = true;
     socket.emit("group-call:start", { conversationId: targetConversationId });
     setGroupCallState("joining");
@@ -104,6 +106,7 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
   const joinGroupCall = useCallback(() => {
     if (!incomingGroupCall) return;
     const socket = getSocket();
+    isJoiningRef.current = true;
     groupCallManager.callId = incomingGroupCall.callId;
     socket.emit("group-call:join", { callId: incomingGroupCall.callId });
     setGroupCallState("joining");
@@ -158,28 +161,49 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
     const socket = getSocket();
 
     const onInitiated = async (evt: GroupCallInitiatedEvent) => {
-      const isSelfStart = groupCallState === "joining" || pendingStartRef.current;
+      const isSelfStart = isJoiningRef.current;
+      isJoiningRef.current = false;
 
       if (isSelfStart) {
-        pendingStartRef.current = false;
-        setCallId(evt.callId);
-        setConversationId(evt.conversationId);
-        setParticipants(
-          evt.participants.map((participant) => ({
-            userId: participant.userId,
-            userName: participant.userName,
-            stream: null,
-          })),
-        );
-        setGroupCallState("active");
+        try {
+          pendingStartRef.current = false;
+          setCallId(evt.callId);
+          setConversationId(evt.conversationId);
+          setParticipants(
+            evt.participants.map((participant) => ({
+              userId: participant.userId,
+              userName: participant.userName,
+              stream: null,
+            })),
+          );
+          setGroupCallState("active");
 
-        await groupCallManager.fetchAndCacheIceServers();
-        const stream = await groupCallManager.initializeMedia();
-        setLocalStream(stream);
-        groupCallManager.callId = evt.callId;
+          await groupCallManager.fetchAndCacheIceServers();
+          const stream = await groupCallManager.initializeMedia();
+          setLocalStream(stream);
+          groupCallManager.callId = evt.callId;
 
-        for (const participant of evt.participants) {
-          await groupCallManager.sendOffer(participant.userId, socket);
+          groupCallManager.onParticipantStream = (userId, stream) => {
+            setParticipants((prev) =>
+              prev.map((participant) =>
+                participant.userId === userId ? { ...participant, stream } : participant,
+              ),
+            );
+          };
+
+          groupCallManager.onParticipantLeft = (userId) => {
+            setParticipants((prev) => prev.filter((participant) => participant.userId !== userId));
+          };
+
+          for (const participant of evt.participants) {
+            await groupCallManager.sendOffer(participant.userId, socket);
+          }
+        } catch (err) {
+          console.error("Group call setup failed:", err);
+          setGroupCallState("idle");
+          setCallId(null);
+          setParticipants([]);
+          setLocalStream(null);
         }
       } else {
         setIncomingGroupCall({
@@ -213,6 +237,18 @@ export function GroupCallProvider({ children }: { children: ReactNode }) {
     };
 
     const onOffer = async (evt: GroupCallOfferEvent) => {
+      groupCallManager.onParticipantStream = (userId, stream) => {
+        setParticipants((prev) =>
+          prev.map((participant) =>
+            participant.userId === userId ? { ...participant, stream } : participant,
+          ),
+        );
+      };
+
+      groupCallManager.onParticipantLeft = (userId) => {
+        setParticipants((prev) => prev.filter((participant) => participant.userId !== userId));
+      };
+
       await groupCallManager.handleOffer(evt.fromUserId, evt.sdp, socket);
       setParticipants((prev) =>
         prev.some((participant) => participant.userId === evt.fromUserId)

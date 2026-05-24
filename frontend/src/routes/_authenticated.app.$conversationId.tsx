@@ -4,6 +4,7 @@ import { Conversations, Upload } from "@/lib/breeze/api";
 import type {
   ChatMessage,
   Conversation,
+  ReplyToPayload,
   WsMessageDeleted,
   WsMessageDelivered,
   WsMessagesSeen,
@@ -56,6 +57,7 @@ function ConversationView() {
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
   const [uploadingAudio, setUploadingAudio] = useState(false);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ReplyToPayload | null>(null);
   // userId → display name of people currently typing in this convo
   const [typingUsers, setTypingUsers] = useState<Map<string, string>>(new Map());
   const lastReadSentRef = useRef<string | null>(null);
@@ -71,6 +73,7 @@ function ConversationView() {
   useEffect(() => {
     setOnlineUserIds(new Set());
     setTypingUsers(new Map());
+    setReplyingTo(null);
     lastReadSentRef.current = null;
   }, [conversationId]);
 
@@ -303,7 +306,7 @@ function ConversationView() {
     }
   };
 
-  const handleSend = (text: string) => {
+  const handleSend = (text: string, replyTo?: ReplyToPayload) => {
     const trimmed = text.trim();
     if (!trimmed) return;
     if (!user?.id) return;
@@ -319,10 +322,14 @@ function ConversationView() {
       sentAt: nowIso,
       createdAt: nowIso,
       receipts: [],
+      replyTo: replyTo ?? null,
       optimistic: true,
     };
     setMessages((prev) => [...prev, optimistic]);
-    wsSendMessage(conversationId, { message: trimmed });
+    wsSendMessage(conversationId, {
+      message: trimmed,
+      replyTo: replyTo ?? undefined,
+    });
   };
 
   const handleSendAudio = async (blob: Blob) => {
@@ -516,15 +523,18 @@ function ConversationView() {
           showTyping={showTyping}
           typingName={typingName}
           onDelete={handleDelete}
+          onReply={(payload) => setReplyingTo(payload)}
         />
 
         <ChatComposer
-          onSend={handleSend}
+          onSend={(text, replyTo) => handleSend(text, replyTo)}
           onSendAudio={handleSendAudio}
           onSendAttachments={handleSendAttachments}
           uploadingAttachments={uploadingAttachments}
           conversationId={conversationId}
           disabled={uploadingAudio || uploadingAttachments}
+          replyingTo={replyingTo}
+          onCancelReply={() => setReplyingTo(null)}
           externalValue={composerDraft}
           onExternalChange={setComposerDraft}
         />

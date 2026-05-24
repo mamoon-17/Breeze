@@ -44,6 +44,15 @@ export class ChatMessage {
   @Column({ type: 'jsonb', nullable: true })
   metadata?: Record<string, unknown> | null;
 
+  @Column({ type: 'jsonb', nullable: true })
+  replyTo?: {
+    messageId: string;
+    senderId: string;
+    senderName: string;
+    text: string;
+    attachmentType?: string;
+  } | null;
+
   /** Server accepted and stored the message (single tick / “sent”). Mirrors persist time. */
   @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   sentAt: Date;

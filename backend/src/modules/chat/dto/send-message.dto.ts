@@ -56,4 +56,13 @@ export class SendMessageDto {
   @ValidateNested({ each: true })
   @Type(() => AttachmentDto)
   attachments?: AttachmentDto[];
+
+  @IsOptional()
+  replyTo?: {
+    messageId: string;
+    senderId: string;
+    senderName: string;
+    text: string;
+    attachmentType?: string;
+  };
 }
