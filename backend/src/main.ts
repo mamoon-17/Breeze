@@ -59,25 +59,32 @@ async function bootstrap() {
     host: appConfig.redisHost,
     port: appConfig.redisPort,
     password: appConfig.redisPassword,
+    lazyConnect: true,
+    enableOfflineQueue: false,
+    maxRetriesPerRequest: 0,
+    connectTimeout: 2_000,
+    retryStrategy: () => null,
   });
   const subClient = pubClient.duplicate();
   pubClient.on('error', (err) => console.error('Redis pubClient error:', err));
   subClient.on('error', (err) => console.error('Redis subClient error:', err));
 
-  await Promise.all([
-    new Promise<void>((resolve, reject) => {
-      pubClient.on('ready', resolve);
-      pubClient.on('error', reject);
-    }),
-    new Promise<void>((resolve, reject) => {
-      subClient.on('ready', resolve);
-      subClient.on('error', reject);
-    }),
-  ]);
-
   const socketStateService = app.get(SocketStateService);
   const io = socketStateService.getServer();
-  io.adapter(createAdapter(pubClient, subClient));
-  Logger.log('Socket.IO Redis adapter configured', 'Bootstrap');
+
+  try {
+    await Promise.all([pubClient.connect(), subClient.connect()]);
+    io.adapter(createAdapter(pubClient, subClient));
+    Logger.log('Socket.IO Redis adapter configured', 'Bootstrap');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    Logger.warn(`Redis adapter disabled: ${msg}`, 'Bootstrap');
+    try {
+      pubClient.disconnect();
+      subClient.disconnect();
+    } catch {
+      // ignore
+    }
+  }
 }
 void bootstrap();

@@ -22,3 +22,6 @@ jobs:
 
       - name: Breeze Push
         run: docker push mamoon17/breeze:latest
+
+      - name: Trigger Render Deployment
+        run: curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
