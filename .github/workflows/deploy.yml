@@ -1,0 +1,24 @@
+name: Deploy Breeze
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Breeze Build
+        run: docker build -t mamoon17/breeze:latest .
+
+      - name: Breeze Push
+        run: docker push mamoon17/breeze:latest
