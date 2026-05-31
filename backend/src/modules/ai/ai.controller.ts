@@ -12,7 +12,9 @@ import {
   Query,
   Delete,
   Patch,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { QueryFailedError } from 'typeorm';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AiService } from './ai.service';
 import { EnhanceMessageDto } from './dto/enhance-message.dto';
@@ -75,8 +77,17 @@ export class AiController {
     }[];
   }> {
     const n = Math.max(1, Math.min(500, Number(limit ?? 200) || 200));
-    const messages = await this.aiService.getZenChatHistory(req.user.id, n);
-    return { messages };
+    try {
+      const messages = await this.aiService.getZenChatHistory(req.user.id, n);
+      return { messages };
+    } catch (error) {
+      if (this.isMissingZenTable(error)) {
+        throw new ServiceUnavailableException(
+          'AI chat history is not available yet. Run database migrations (ai_zen_chat_messages).',
+        );
+      }
+      throw error;
+    }
   }
 
   @Post('zen/history')
@@ -362,6 +373,12 @@ export class AiController {
       .map((value) => (lower ? value.trim().toLowerCase() : value.trim()))
       .filter((value) => value.length > 0);
     return Array.from(new Set(cleaned));
+  }
+
+  private isMissingZenTable(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) return false;
+    const msg = String(error.message).toLowerCase();
+    return msg.includes('ai_zen_chat_messages') && msg.includes('does not exist');
   }
 
   private toConfidence(value: unknown): number {

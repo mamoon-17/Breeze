@@ -115,6 +115,28 @@ async function reauthAndReconnect(): Promise<boolean> {
   }
 }
 
+/**
+ * REST uses API_BASE (`/api` in production). Socket.IO must use `path`, not a
+ * leading-slash URL — `io("/api")` is treated as a namespace and hits `/socket.io/`
+ * without the nginx `/api` prefix.
+ */
+function resolveSocketIoOptions(): {
+  url?: string;
+  path: string;
+  transports: ("websocket" | "polling")[];
+  withCredentials: boolean;
+} {
+  const base = API_BASE.replace(/\/+$/, "");
+  const shared = {
+    transports: ["websocket", "polling"] as ("websocket" | "polling")[],
+    withCredentials: true,
+  };
+  if (base.startsWith("http://") || base.startsWith("https://")) {
+    return { ...shared, url: base, path: "/socket.io" };
+  }
+  return { ...shared, path: `${base}/socket.io` };
+}
+
 function isAuthError(err: unknown): boolean {
   if (!err) return false;
   const msg =
@@ -129,11 +151,10 @@ function isAuthError(err: unknown): boolean {
 export function getSocket(): Socket {
   if (socket) return socket;
   const token = getAccessToken();
-  socket = io(API_BASE, {
-    transports: ["websocket"],
+  socket = io({
+    ...resolveSocketIoOptions(),
     auth: token ? { token } : {},
     autoConnect: true,
-    withCredentials: true,
   });
 
   // Ensure the server sees a disconnect when the tab is closed/navigated away.

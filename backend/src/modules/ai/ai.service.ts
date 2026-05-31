@@ -5,6 +5,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Repository } from 'typeorm';
@@ -53,11 +54,20 @@ export class AiService {
     this.client = new OpenAI({ apiKey, baseURL });
   }
 
+  private assertAiConfigured(): void {
+    if (!process.env.GITHUB_MODEL_KEY?.trim()) {
+      throw new ServiceUnavailableException(
+        'AI is not configured. Set GITHUB_MODEL_KEY on the server.',
+      );
+    }
+  }
+
   /**
    * Simple system + user prompt completion.
    * Used by the mood enhancer.
    */
   async complete(systemPrompt: string, userPrompt: string): Promise<string> {
+    this.assertAiConfigured();
     const response = await this.client.chat.completions.create({
       model: this.model,
       messages: [
@@ -78,6 +88,7 @@ export class AiService {
   async chat(
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
   ): Promise<string> {
+    this.assertAiConfigured();
     const response = await this.client.chat.completions.create({
       model: this.model,
       messages,

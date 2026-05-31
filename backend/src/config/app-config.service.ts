@@ -180,14 +180,18 @@ export class AppConfigService {
 
   get allowedOrigins(): string[] {
     const origins = this.configService.get<string>('ALLOWED_ORIGINS');
-    if (origins) {
-      return origins.split(',').map((o) => o.trim());
+    const list = origins
+      ? origins.split(',').map((o) => o.trim()).filter(Boolean)
+      : [
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://localhost:5173',
+        ];
+    const frontend = this.frontendUrl.replace(/\/+$/, '');
+    if (frontend && !list.includes(frontend)) {
+      list.push(frontend);
     }
-    return [
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:5173',
-    ];
+    return list;
   }
 
   get frontendUrl(): string {
