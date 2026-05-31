@@ -11,6 +11,10 @@ RUN npm ci
 
 COPY ./frontend ./
 
+# Same-origin API + WebSocket through nginx in the production image.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=${VITE_API_URL}
+
 RUN npm run build
 
 # -------------------------
@@ -51,8 +55,8 @@ COPY --from=backend-builder /backend/package*.json ./
 
 RUN npm ci --omit=dev
 
-# nginx config
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+# nginx config (rendered at container start from start.sh)
+COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 # startup script
 COPY start.sh /start.sh

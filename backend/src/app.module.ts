@@ -4,7 +4,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { AppConfigModule } from './config/app-config.module';
 import { AppConfigService } from './config/app-config.service';
 import { RedisModule } from './modules/redis/redis.module';
@@ -51,6 +50,5 @@ import { GroupCallModule } from './modules/group-call/group-call.module';
     GroupCallModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
 })
 export class AppModule {}
