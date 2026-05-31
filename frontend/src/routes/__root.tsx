@@ -1,6 +1,4 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
-
-import appCss from "../styles.css?url";
+import { Outlet, Link, createRootRoute, HeadContent } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/breeze/auth-context";
 import { CallProvider } from "@/lib/breeze/call-context";
 import { CallOverlay } from "@/components/call/CallOverlay";
@@ -9,17 +7,6 @@ import { GroupCallProvider } from "../contexts/GroupCallContext";
 import GroupCallOverlay from "../components/group-call/GroupCallOverlay";
 import IncomingGroupCallBanner from "../components/group-call/IncomingGroupCallBanner";
 import { Toaster } from "@/components/ui/sonner";
-
-const themeInitScript = `(() => {
-  try {
-    const theme = localStorage.getItem("breeze-theme") || "light";
-    const accentTheme = localStorage.getItem("breeze-accent-theme") || "default";
-    document.documentElement.setAttribute("data-theme", accentTheme);
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  } catch {
-    // ignore
-  }
-})();`;
 
 function NotFoundComponent() {
   return (
@@ -64,44 +51,27 @@ export const Route = createRootRoute({
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
-    links: [
-      { rel: "stylesheet", href: appCss },
-      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
-    ],
   }),
-  shellComponent: RootShell,
   component: RootComponent,
   notFoundComponent: NotFoundComponent,
 });
 
-function RootShell({ children }: { children: React.ReactNode }) {
-  return (
-    <html lang="en">
-      <head>
-        <HeadContent />
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-      </head>
-      <body>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  );
-}
-
 function RootComponent() {
   return (
-    <AuthProvider>
-      <GroupCallProvider>
-        <CallProvider>
-          <Outlet />
-          <CallOverlay />
-          <CallFloater />
-          <GroupCallOverlay />
-          <IncomingGroupCallBanner />
-        </CallProvider>
-      </GroupCallProvider>
-      <Toaster />
-    </AuthProvider>
+    <>
+      <HeadContent />
+      <AuthProvider>
+        <GroupCallProvider>
+          <CallProvider>
+            <Outlet />
+            <CallOverlay />
+            <CallFloater />
+            <GroupCallOverlay />
+            <IncomingGroupCallBanner />
+          </CallProvider>
+        </GroupCallProvider>
+        <Toaster />
+      </AuthProvider>
+    </>
   );
 }

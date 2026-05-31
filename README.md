@@ -1,6 +1,6 @@
 # Breeze
 
-![version](https://img.shields.io/badge/version-0.0.1-blue)
+![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![status](https://img.shields.io/badge/status-active-brightgreen)
 ![node](https://img.shields.io/badge/node-v20%2B-339933?logo=node.js&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-informational)

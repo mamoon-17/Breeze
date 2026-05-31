@@ -37,6 +37,9 @@ RUN apt-get update && \
     apt-get install -y nginx && \
     rm -rf /var/lib/apt/lists/*
 
+# Drop the default nginx site so our config is the only one.
+RUN rm -f /etc/nginx/sites-enabled/default
+
 # Frontend build output
 COPY --from=frontend-builder /frontend/dist /var/www/html
 
