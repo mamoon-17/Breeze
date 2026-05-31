@@ -115,10 +115,13 @@ async function reauthAndReconnect(): Promise<boolean> {
   }
 }
 
+/** Socket.IO is always mounted at `/socket.io` on the host (nginx), not under `/api`. */
+const SOCKET_IO_PATH = "/socket.io";
+
 /**
- * REST uses API_BASE (`/api` in production). Socket.IO must use `path`, not a
- * leading-slash URL — `io("/api")` is treated as a namespace and hits `/socket.io/`
- * without the nginx `/api` prefix.
+ * REST may live under `/api` (or `https://host/api`), but Socket.IO is proxied at
+ * `/socket.io` only. Passing `url` with a pathname (e.g. `…/api`) makes the
+ * client hit `/api/socket.io`, which nginx does not forward.
  */
 function resolveSocketIoOptions(): {
   url?: string;
@@ -130,11 +133,18 @@ function resolveSocketIoOptions(): {
   const shared = {
     transports: ["websocket", "polling"] as ("websocket" | "polling")[],
     withCredentials: true,
+    path: SOCKET_IO_PATH,
   };
-  if (base.startsWith("http://") || base.startsWith("https://")) {
-    return { ...shared, url: base, path: "/socket.io" };
+
+  if (!base.startsWith("http://") && !base.startsWith("https://")) {
+    return shared;
   }
-  return { ...shared, path: `${base}/socket.io` };
+
+  try {
+    return { ...shared, url: new URL(base).origin };
+  } catch {
+    return shared;
+  }
 }
 
 function isAuthError(err: unknown): boolean {

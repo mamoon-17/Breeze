@@ -28,6 +28,8 @@ export class AiService {
   private readonly logger = new Logger(AiService.name);
   private readonly client: OpenAI;
   private readonly model: string;
+  /** Avoid duplicate background memory rebuilds for the same user. */
+  private readonly memoryRefreshInFlight = new Map<string, Promise<void>>();
 
   constructor(
     @InjectRepository(ChatMessage)
@@ -51,7 +53,13 @@ export class AiService {
     const baseURL =
       process.env.AI_BASE_URL || 'https://models.github.ai/inference';
 
-    this.client = new OpenAI({ apiKey, baseURL });
+    this.client = new OpenAI({
+      apiKey,
+      baseURL,
+      // Stay under typical reverse-proxy limits (e.g. Render ~30s) so retries can run.
+      timeout: 25_000,
+      maxRetries: 0,
+    });
   }
 
   private assertAiConfigured(): void {
@@ -68,15 +76,17 @@ export class AiService {
    */
   async complete(systemPrompt: string, userPrompt: string): Promise<string> {
     this.assertAiConfigured();
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 1024,
-    });
+    const response = await this.withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 1024,
+      }),
+    );
 
     return response.choices[0]?.message?.content?.trim() ?? '';
   }
@@ -89,12 +99,14 @@ export class AiService {
     messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
   ): Promise<string> {
     this.assertAiConfigured();
-    const response = await this.client.chat.completions.create({
-      model: this.model,
-      messages,
-      temperature: 0.7,
-      max_tokens: 1024,
-    });
+    const response = await this.withRetry(() =>
+      this.client.chat.completions.create({
+        model: this.model,
+        messages,
+        temperature: 0.7,
+        max_tokens: 1024,
+      }),
+    );
 
     return response.choices[0]?.message?.content?.trim() ?? '';
   }
@@ -109,28 +121,84 @@ export class AiService {
       where: { userId },
     });
 
-    // Refresh if missing or stale (6h) to keep it relevant but not expensive.
+    if (!this.isUserMemoryStale(existing)) {
+      return existing?.memory?.trim() ?? '';
+    }
+
+    return this.rebuildAndPersistUserMemory(userId, existing?.memory ?? '', existing);
+  }
+
+  /**
+   * Fast path for /ai/chat — never blocks on a memory rebuild (which is an
+   * extra LLM call and often pushes the request over Render's HTTP timeout).
+   */
+  async getUserMemoryForChat(userId: string): Promise<string> {
+    const existing = await this.aiUserMemoryRepository.findOne({
+      where: { userId },
+    });
+    const memory = existing?.memory?.trim() ?? '';
+
+    if (this.isUserMemoryStale(existing)) {
+      this.scheduleUserMemoryRefresh(userId, existing);
+    }
+
+    return memory;
+  }
+
+  private isUserMemoryStale(existing: AiUserMemory | null): boolean {
     const staleAfterMs = 6 * 60 * 60 * 1000;
-    const isStale =
+    return (
       !existing?.updatedAt ||
-      Date.now() - existing.updatedAt.getTime() > staleAfterMs;
+      Date.now() - existing.updatedAt.getTime() > staleAfterMs
+    );
+  }
 
-    if (existing && !isStale) return existing.memory?.trim() ?? '';
+  private scheduleUserMemoryRefresh(
+    userId: string,
+    existing: AiUserMemory | null,
+  ): void {
+    if (this.memoryRefreshInFlight.has(userId)) return;
 
-    const rebuilt = await this.rebuildUserMemoryFromChats(
+    const job = this.rebuildAndPersistUserMemory(
       userId,
       existing?.memory ?? '',
+      existing,
+    )
+      .then(() => undefined)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`Background memory refresh failed for ${userId}: ${msg}`);
+      })
+      .finally(() => {
+        this.memoryRefreshInFlight.delete(userId);
+      });
+
+    this.memoryRefreshInFlight.set(userId, job);
+  }
+
+  private async rebuildAndPersistUserMemory(
+    userId: string,
+    existingMemory: string,
+    existing: AiUserMemory | null,
+  ): Promise<string> {
+    const rebuilt = await this.rebuildUserMemoryFromChats(
+      userId,
+      existingMemory,
     );
 
-    if (!existing) {
-      const row = this.aiUserMemoryRepository.create({
+    let row =
+      existing ??
+      (await this.aiUserMemoryRepository.findOne({ where: { userId } }));
+
+    if (!row) {
+      row = this.aiUserMemoryRepository.create({
         userId,
         memory: rebuilt,
       });
       await this.aiUserMemoryRepository.save(row);
     } else {
-      existing.memory = rebuilt;
-      await this.aiUserMemoryRepository.save(existing);
+      row.memory = rebuilt;
+      await this.aiUserMemoryRepository.save(row);
     }
 
     return rebuilt.trim();
@@ -170,6 +238,51 @@ export class AiService {
 
     // Hard cap to avoid runaway prompts.
     return cleaned.slice(0, 4000);
+  }
+
+  private async withRetry<T>(
+    fn: () => Promise<T>,
+    maxAttempts = 3,
+  ): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastError = err;
+        if (!this.isRetryableAiError(err) || attempt === maxAttempts) {
+          throw err;
+        }
+        const delayMs = 400 * attempt;
+        this.logger.warn(
+          `AI request failed (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw lastError;
+  }
+
+  private isRetryableAiError(err: unknown): boolean {
+    if (err instanceof OpenAI.APIError) {
+      return (
+        err.status === 408 ||
+        err.status === 429 ||
+        err.status === 502 ||
+        err.status === 503 ||
+        err.status === 504
+      );
+    }
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? String((err as { code: unknown }).code)
+        : '';
+    return (
+      code === 'ECONNRESET' ||
+      code === 'ETIMEDOUT' ||
+      code === 'ECONNREFUSED' ||
+      code === 'ENOTFOUND'
+    );
   }
 
   // ─── Zen AI persisted chat history ─────────────────────────────────────────

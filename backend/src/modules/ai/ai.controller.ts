@@ -163,7 +163,7 @@ export class AiController {
       `User ${req.user.id} AI chat — ${dto.messages.length} messages`,
     );
     try {
-      const memory = await this.aiService.getUserMemory(req.user.id);
+      const memory = await this.aiService.getUserMemoryForChat(req.user.id);
 
       // Prepend the system prompt so every conversation has the assistant context
       const messagesWithSystem: {
