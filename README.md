@@ -12,7 +12,7 @@ Breeze blends real-time chat, voice and video calls, and an agentic LLM assistan
 
 ## Live Demo
 
-Live URL: (coming soon)
+Live URL: https://breeze-latest.onrender.com/
 
 ## Key Features
 
